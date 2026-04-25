@@ -25,10 +25,17 @@ import {
   subscribe,
   initialState,
 } from "./state";
-import type { TextOverlay, ImageOverlay } from "./state";
+import type {
+  TextOverlay,
+  ImageOverlay,
+  ArrowOverlay,
+  RectOverlay,
+  Tool,
+} from "./state";
 import { renderDevice } from "./devices";
 import { renderOverlays, attachOverlayDragHandlers } from "./overlays";
 import { loadDraft, clearDraft, makeAutoSave } from "./storage";
+import { extractPalette, buildMagicGradient, buildMagicMesh, rgbToHex } from "./magic";
 
 // ── Helper: build swatch grid ──────────────────────────────────────────────
 
@@ -76,6 +83,16 @@ app.innerHTML = `
           <input id="colorPicker" type="color" class="hidden" value="#ffffff" />
         </label>
       </div>
+
+      <div class="text-xs font-medium text-zinc-700 mb-2 mt-3 flex items-center justify-between">
+        <span>Magic ✨</span>
+        <span class="text-[10px] text-zinc-400">from your image</span>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <button id="magicGradient" class="btn btn-secondary justify-center text-xs" disabled>Gradient</button>
+        <button id="magicMesh" class="btn btn-secondary justify-center text-xs" disabled>Mesh</button>
+      </div>
+      <div id="magicPalette" class="flex gap-1 mt-2 h-5 hidden"></div>
 
       <div class="text-xs font-medium text-zinc-700 mb-2">Solid</div>
       ${swatchGrid("solidSwatches", SOLID_COLORS, "solid")}
@@ -134,6 +151,14 @@ app.innerHTML = `
     </div>
 
     <div class="tab-panel p-4" data-panel="overlay">
+      <div class="section-title">Tool</div>
+      <div class="grid grid-cols-3 gap-2" id="toolPalette">
+        <button class="device-btn active" data-tool="select">Select</button>
+        <button class="device-btn" data-tool="arrow">↗ Arrow</button>
+        <button class="device-btn" data-tool="rect">▭ Box</button>
+      </div>
+      <div class="text-xs text-zinc-500 mt-2">Pick a tool, then drag on the canvas to draw.</div>
+
       <div class="section-title">Add Layer</div>
       <div class="grid grid-cols-2 gap-2">
         <button class="btn btn-secondary justify-center" id="addText">+ Text</button>
@@ -284,9 +309,59 @@ function render() {
 
   frame.innerHTML = body;
 
+  // Drawing-mode cursor on frame
+  if (state.tool !== "select") frame.classList.add("drawing");
+  else frame.classList.remove("drawing");
+
   renderUndoRedo();
   renderLayersList();
   renderOverlayProps();
+  renderToolPalette();
+  renderMagicState();
+}
+
+function renderToolPalette() {
+  document.querySelectorAll("#toolPalette [data-tool]").forEach((b) => {
+    const isActive = (b as HTMLElement).dataset.tool === state.tool;
+    b.classList.toggle("active", isActive);
+  });
+}
+
+let lastPalette: ReturnType<typeof rgbToHex>[] = [];
+async function refreshMagicPalette() {
+  const gradBtn = document.getElementById("magicGradient") as HTMLButtonElement;
+  const meshBtn = document.getElementById("magicMesh") as HTMLButtonElement;
+  const paletteEl = document.getElementById("magicPalette")!;
+  if (!state.imageSrc) {
+    gradBtn.disabled = true;
+    meshBtn.disabled = true;
+    paletteEl.classList.add("hidden");
+    return;
+  }
+  try {
+    const palette = await extractPalette(state.imageSrc, 5);
+    lastPalette = palette.map(rgbToHex);
+    gradBtn.disabled = false;
+    meshBtn.disabled = false;
+    paletteEl.classList.remove("hidden");
+    paletteEl.innerHTML = lastPalette
+      .map((c) => `<div class="flex-1 rounded" style="background:${c}"></div>`)
+      .join("");
+  } catch (err) {
+    console.warn("[magic] failed", err);
+  }
+}
+
+function renderMagicState() {
+  // Just keeps the buttons enabled/disabled in sync with image presence
+  const gradBtn = document.getElementById("magicGradient") as HTMLButtonElement;
+  const meshBtn = document.getElementById("magicMesh") as HTMLButtonElement;
+  if (gradBtn && meshBtn) {
+    if (!state.imageSrc) {
+      gradBtn.disabled = true;
+      meshBtn.disabled = true;
+    }
+  }
 }
 
 function renderUndoRedo() {
@@ -302,7 +377,11 @@ function renderLayersList() {
   }
   list.innerHTML = state.overlays
     .map((o) => {
-      const label = o.type === "text" ? `T · ${o.text.slice(0, 20)}` : "Image";
+      let label = "Layer";
+      if (o.type === "text") label = `T · ${o.text.slice(0, 20)}`;
+      else if (o.type === "image") label = "🖼 Image";
+      else if (o.type === "arrow") label = "↗ Arrow";
+      else if (o.type === "rect") label = "▭ Box";
       const active = o.id === state.selectedOverlayId ? "bg-zinc-100" : "";
       return `
         <div class="flex items-center gap-2 px-2 py-1.5 rounded ${active} hover:bg-zinc-50 cursor-pointer" data-layer-id="${o.id}">
@@ -372,7 +451,7 @@ function renderOverlayProps() {
         </label>
       </div>`;
     bindTextProps(overlay);
-  } else {
+  } else if (overlay.type === "image") {
     container.innerHTML = `
       <div class="props-panel">
         <label>Width</label>
@@ -381,7 +460,95 @@ function renderOverlayProps() {
         <input id="propRot" type="number" min="-180" max="180" value="${overlay.rotation}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
       </div>`;
     bindImageProps(overlay);
+  } else if (overlay.type === "arrow") {
+    container.innerHTML = `
+      <div class="props-panel">
+        <div class="row-2">
+          <div>
+            <label>Color</label>
+            <input id="propColor" type="color" class="color-input" value="${overlay.color}" />
+          </div>
+          <div>
+            <label>Stroke</label>
+            <input id="propStroke" type="number" step="0.1" min="0.2" max="3" value="${overlay.strokeWidth}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+          </div>
+        </div>
+      </div>`;
+    bindArrowProps(overlay);
+  } else if (overlay.type === "rect") {
+    container.innerHTML = `
+      <div class="props-panel">
+        <div class="row-2">
+          <div>
+            <label>Stroke</label>
+            <input id="propColor" type="color" class="color-input" value="${overlay.color}" />
+          </div>
+          <div>
+            <label>Stroke W</label>
+            <input id="propStroke" type="number" step="0.1" min="0.2" max="3" value="${overlay.strokeWidth}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+          </div>
+        </div>
+        <div class="row-2">
+          <div>
+            <label>Fill</label>
+            <input id="propFill" type="text" value="${overlay.fill}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" placeholder="rgba(...) or transparent"/>
+          </div>
+          <div>
+            <label>Radius</label>
+            <input id="propRadius" type="number" min="0" max="20" value="${overlay.radius}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+          </div>
+        </div>
+      </div>`;
+    bindRectProps(overlay);
   }
+}
+
+function bindArrowProps(o: ArrowOverlay) {
+  const color = document.getElementById("propColor") as HTMLInputElement;
+  color.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as ArrowOverlay;
+      cur.color = color.value;
+    });
+  });
+  const stroke = document.getElementById("propStroke") as HTMLInputElement;
+  stroke.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as ArrowOverlay;
+      cur.strokeWidth = parseFloat(stroke.value);
+    });
+  });
+}
+
+function bindRectProps(o: RectOverlay) {
+  const color = document.getElementById("propColor") as HTMLInputElement;
+  color.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as RectOverlay;
+      cur.color = color.value;
+    });
+  });
+  const stroke = document.getElementById("propStroke") as HTMLInputElement;
+  stroke.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as RectOverlay;
+      cur.strokeWidth = parseFloat(stroke.value);
+    });
+  });
+  const fill = document.getElementById("propFill") as HTMLInputElement;
+  fill.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as RectOverlay;
+      cur.fill = fill.value;
+    });
+  });
+  const radius = document.getElementById("propRadius") as HTMLInputElement;
+  radius.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as RectOverlay;
+      cur.radius = parseFloat(radius.value);
+    });
+  });
 }
 
 function bindTextProps(o: TextOverlay) {
@@ -765,7 +932,7 @@ attachOverlayDragHandlers(
       update(
         (s) => {
           const o = s.overlays.find((o) => o.id === id);
-          if (o) {
+          if (o && (o.type === "text" || o.type === "image" || o.type === "rect")) {
             o.x = x;
             o.y = y;
           }
@@ -816,6 +983,148 @@ window.addEventListener("keydown", (e) => {
 
 document.getElementById("undoBtn")!.addEventListener("click", () => undo());
 document.getElementById("redoBtn")!.addEventListener("click", () => redo());
+
+// ── Tool palette ──────────────────────────────────────────────────────────
+
+document.getElementById("toolPalette")!.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest("[data-tool]") as HTMLElement | null;
+  if (!btn) return;
+  const tool = btn.dataset.tool as Tool;
+  update((s) => {
+    s.tool = tool;
+    s.selectedOverlayId = null;
+  });
+});
+
+// ── Magic background ──────────────────────────────────────────────────────
+
+document.getElementById("magicGradient")!.addEventListener("click", async () => {
+  if (!state.imageSrc) return;
+  const palette = await extractPalette(state.imageSrc, 5);
+  update((s) => {
+    s.background = { kind: "gradient", value: buildMagicGradient(palette) };
+  });
+  clearSwatchActive();
+});
+document.getElementById("magicMesh")!.addEventListener("click", async () => {
+  if (!state.imageSrc) return;
+  const palette = await extractPalette(state.imageSrc, 5);
+  update((s) => {
+    s.background = { kind: "gradient", value: buildMagicMesh(palette) };
+  });
+  clearSwatchActive();
+});
+
+// ── Drawing on canvas (arrow / rect tools) ────────────────────────────────
+
+interface DrawingState {
+  tool: Tool;
+  startXPct: number;
+  startYPct: number;
+  newId: string;
+}
+let drawing: DrawingState | null = null;
+
+function frameCoordsFromEvent(e: MouseEvent): { x: number; y: number } | null {
+  const rect = frame.getBoundingClientRect();
+  // rect is the frame's rendered bounds (already scaled). Convert mouse to %
+  const x = ((e.clientX - rect.left) / rect.width) * 100;
+  const y = ((e.clientY - rect.top) / rect.height) * 100;
+  return { x, y };
+}
+
+frame.addEventListener("mousedown", (e) => {
+  if (state.tool === "select") return;
+  // Don't draw if clicking on an existing overlay
+  if ((e.target as HTMLElement).closest("[data-overlay-id]")) return;
+  const c = frameCoordsFromEvent(e);
+  if (!c) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  const id = newId();
+  drawing = { tool: state.tool, startXPct: c.x, startYPct: c.y, newId: id };
+
+  beginTransaction();
+  update((s) => {
+    if (drawing!.tool === "arrow") {
+      const arr: ArrowOverlay = {
+        id,
+        type: "arrow",
+        x1: c.x,
+        y1: c.y,
+        x2: c.x,
+        y2: c.y,
+        color: "#ef4444",
+        strokeWidth: 0.6,
+      };
+      s.overlays.push(arr);
+    } else if (drawing!.tool === "rect") {
+      const rect: RectOverlay = {
+        id,
+        type: "rect",
+        x: c.x,
+        y: c.y,
+        width: 0,
+        height: 0,
+        color: "#fbbf24",
+        fill: "transparent",
+        strokeWidth: 0.6,
+        radius: 1,
+      };
+      s.overlays.push(rect);
+    }
+    s.selectedOverlayId = id;
+  }, false);
+});
+
+window.addEventListener("mousemove", (e) => {
+  if (!drawing) return;
+  const c = frameCoordsFromEvent(e);
+  if (!c) return;
+  update((s) => {
+    const o = s.overlays.find((x) => x.id === drawing!.newId);
+    if (!o) return;
+    if (o.type === "arrow") {
+      o.x2 = Math.max(0, Math.min(100, c.x));
+      o.y2 = Math.max(0, Math.min(100, c.y));
+    } else if (o.type === "rect") {
+      const minX = Math.min(drawing!.startXPct, c.x);
+      const minY = Math.min(drawing!.startYPct, c.y);
+      o.x = Math.max(0, minX);
+      o.y = Math.max(0, minY);
+      o.width = Math.min(100 - o.x, Math.abs(c.x - drawing!.startXPct));
+      o.height = Math.min(100 - o.y, Math.abs(c.y - drawing!.startYPct));
+    }
+  }, false);
+});
+
+window.addEventListener("mouseup", () => {
+  if (!drawing) return;
+  const created = state.overlays.find((o) => o.id === drawing!.newId);
+  // If user just clicked without dragging, the shape is degenerate — remove it
+  if (created) {
+    if (created.type === "arrow") {
+      const dx = created.x2 - created.x1;
+      const dy = created.y2 - created.y1;
+      if (Math.hypot(dx, dy) < 1) {
+        update((s) => {
+          s.overlays = s.overlays.filter((o) => o.id !== drawing!.newId);
+        }, false);
+      }
+    } else if (created.type === "rect" && created.width < 1 && created.height < 1) {
+      update((s) => {
+        s.overlays = s.overlays.filter((o) => o.id !== drawing!.newId);
+      }, false);
+    }
+  }
+  commitTransaction();
+  // After drawing, switch back to Select tool for convenience
+  update((s) => {
+    s.tool = "select";
+  }, false);
+  drawing = null;
+});
 
 // ── Export ─────────────────────────────────────────────────────────────────
 
@@ -872,9 +1181,14 @@ document.getElementById("export")!.addEventListener("click", async () => {
 // ── Persistence ────────────────────────────────────────────────────────────
 
 const autoSave = makeAutoSave(() => state, 1500);
+let lastImageSrc: string | null = null;
 subscribe(() => {
   render();
   autoSave();
+  if (state.imageSrc !== lastImageSrc) {
+    lastImageSrc = state.imageSrc;
+    refreshMagicPalette();
+  }
 });
 
 (async () => {

@@ -1,14 +1,29 @@
-import type { TextOverlay, ImageOverlay, State } from "./state";
+import type {
+  TextOverlay,
+  ImageOverlay,
+  ArrowOverlay,
+  RectOverlay,
+  State,
+} from "./state";
 
 // Render all overlays on top of the device. Returns HTML string.
 export function renderOverlays(state: State): string {
-  return state.overlays
-    .map((o) => {
-      const selected = o.id === state.selectedOverlayId;
-      if (o.type === "text") return renderTextOverlay(o, selected);
-      return renderImageOverlay(o, selected);
-    })
-    .join("");
+  let body = "";
+  // Annotations (arrows + rects) live inside one shared SVG layer so they stack
+  // correctly without each one needing its own SVG with a fixed bounding box.
+  const annotations = state.overlays.filter(
+    (o) => o.type === "arrow" || o.type === "rect",
+  ) as (ArrowOverlay | RectOverlay)[];
+  if (annotations.length > 0) {
+    body += renderAnnotationLayer(annotations, state.selectedOverlayId);
+  }
+  // Text and image overlays each get their own div
+  for (const o of state.overlays) {
+    const selected = o.id === state.selectedOverlayId;
+    if (o.type === "text") body += renderTextOverlay(o, selected);
+    else if (o.type === "image") body += renderImageOverlay(o, selected);
+  }
+  return body;
 }
 
 function renderTextOverlay(o: TextOverlay, selected: boolean): string {
@@ -44,6 +59,64 @@ function renderImageOverlay(o: ImageOverlay, selected: boolean): string {
     </div>`;
 }
 
+function renderAnnotationLayer(
+  shapes: (ArrowOverlay | RectOverlay)[],
+  selectedId: string | null,
+): string {
+  // SVG with viewBox 0..100 in both axes, preserveAspectRatio=none so coords
+  // map directly to percentages of the frame.
+  const defs = shapes
+    .filter((s): s is ArrowOverlay => s.type === "arrow")
+    .map(
+      (a) => `
+      <marker id="m-${a.id}" viewBox="0 0 10 10" refX="9" refY="5"
+              markerWidth="${4 + a.strokeWidth * 2}" markerHeight="${4 + a.strokeWidth * 2}"
+              orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+        <path d="M0,0 L10,5 L0,10 z" fill="${a.color}"/>
+      </marker>`,
+    )
+    .join("");
+
+  const body = shapes
+    .map((s) => {
+      const selected = s.id === selectedId;
+      const selectStroke = selected
+        ? `stroke-dasharray="2 2"`
+        : "";
+      if (s.type === "arrow") {
+        return `
+          <line
+            data-overlay-id="${s.id}"
+            class="overlay-svg ${selected ? "selected" : ""}"
+            x1="${s.x1}" y1="${s.y1}" x2="${s.x2}" y2="${s.y2}"
+            stroke="${s.color}" stroke-width="${s.strokeWidth}"
+            stroke-linecap="round"
+            marker-end="url(#m-${s.id})"
+            vector-effect="non-scaling-stroke"
+          />`;
+      } else {
+        return `
+          <rect
+            data-overlay-id="${s.id}"
+            class="overlay-svg ${selected ? "selected" : ""}"
+            x="${s.x}" y="${s.y}" width="${s.width}" height="${s.height}"
+            rx="${s.radius}" ry="${s.radius}"
+            fill="${s.fill}"
+            stroke="${s.color}" stroke-width="${s.strokeWidth}"
+            ${selectStroke}
+            vector-effect="non-scaling-stroke"
+          />`;
+      }
+    })
+    .join("");
+
+  return `
+    <svg class="annotations-layer" viewBox="0 0 100 100" preserveAspectRatio="none">
+      <defs>${defs}</defs>
+      ${body}
+    </svg>`;
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -53,7 +126,7 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-// ── Drag handling ──────────────────────────────────────────────────────────
+// ── Drag handling for text/image overlays ─────────────────────────────────
 
 export type OverlayDragHandlers = {
   onSelect: (id: string | null) => void;
@@ -83,6 +156,12 @@ export function attachOverlayDragHandlers(
       handlers.onSelect(null);
       return;
     }
+    // Drag only applies to text/image overlays — SVG shapes are select-only here
+    if (overlay.tagName === "line" || overlay.tagName === "rect" ||
+        overlay.classList?.contains("overlay-svg")) {
+      handlers.onSelect(overlay.getAttribute("data-overlay-id"));
+      return;
+    }
     e.preventDefault();
     e.stopPropagation();
 
@@ -90,11 +169,9 @@ export function attachOverlayDragHandlers(
     handlers.onSelect(id);
 
     const scale = getStageScale();
-    // Frame's CSS dimensions are real (e.g. 1920px). Effective size on screen = real * scale
     const frameW = container.offsetWidth * scale;
     const frameH = container.offsetHeight * scale;
 
-    // Read current pct from inline style (or compute from element rect)
     const left = parseFloat(overlay.style.left);
     const top = parseFloat(overlay.style.top);
 

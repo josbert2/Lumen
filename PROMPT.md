@@ -61,14 +61,17 @@ All in the browser. Nothing leaves the user's machine.
 - [x] Export presets: 1x / 2x / 3x
 - [ ] Annotations: arrows, shapes, blur regions (deferred to Phase 3)
 
-### 🚀 Phase 3 — Big features (separate effort)
+### 🔄 Phase 3 — Differentiators & advanced (in progress)
 
-- [ ] Migrate to **React + Zustand + Konva** (multi-layer canvas)
+- [x] **"Magic" background**: extract dominant colors from uploaded image (Gradient + Mesh modes)
+- [x] **Annotations**: arrow + rectangle, drawable on canvas, editable color/stroke/fill/radius
+- [ ] Annotations: blur regions, freehand pen
 - [ ] Tweet / code snippet import
-- [ ] Animation timeline (keyframes, easing, playhead)
-- [ ] Video export: MP4 (WebCodecs / FFmpeg WASM), WebM, GIF
-- [ ] "Magic" background: extract dominant colors from uploaded image (differentiator vs screenshot-studio)
 - [ ] Unsplash integration for backgrounds
+- [ ] Background blur + noise filters
+- [ ] Migrate to **React + Zustand + Konva** (multi-layer canvas) — needed for:
+  - Animation timeline (keyframes, easing, playhead)
+  - Video export: MP4 (WebCodecs / FFmpeg WASM), WebM, GIF
 
 ---
 

@@ -32,7 +32,33 @@ export type ImageOverlay = {
   rotation: number;
 };
 
-export type Overlay = TextOverlay | ImageOverlay;
+export type ArrowOverlay = {
+  id: string;
+  type: "arrow";
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  color: string;
+  strokeWidth: number; // SVG units; the SVG viewBox is 0..100, so 0.5 ≈ 0.5% of frame
+};
+
+export type RectOverlay = {
+  id: string;
+  type: "rect";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color: string;
+  fill: string; // "transparent" or rgba(...)
+  strokeWidth: number;
+  radius: number;
+};
+
+export type Overlay = TextOverlay | ImageOverlay | ArrowOverlay | RectOverlay;
+
+export type Tool = "select" | "text" | "image" | "arrow" | "rect" | "highlight";
 
 export interface State {
   imageSrc: string | null;
@@ -49,6 +75,7 @@ export interface State {
   selectedOverlayId: string | null;
   watermark: boolean;
   exportScale: 1 | 2 | 3;
+  tool: Tool;
 }
 
 export const initialState: State = {
@@ -66,6 +93,7 @@ export const initialState: State = {
   selectedOverlayId: null,
   watermark: false,
   exportScale: 1,
+  tool: "select",
 };
 
 // ── Mutable state container ────────────────────────────────────────────────

@@ -429,6 +429,38 @@ input[type="range"] {
   color: white;
 }
 
+/* ── Annotations layer ────────────────────────────────────────────────── */
+
+.annotations-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 9;
+}
+.annotations-layer .overlay-svg {
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.annotations-layer rect.overlay-svg {
+  pointer-events: visible;
+}
+.annotations-layer .overlay-svg:hover {
+  filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.5));
+}
+.annotations-layer .overlay-svg.selected {
+  filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.9));
+}
+
+/* ── Frame in drawing mode ────────────────────────────────────────────── */
+
+.frame.drawing,
+.frame.drawing * {
+  cursor: crosshair !important;
+}
+
 /* ── Overlays ─────────────────────────────────────────────────────────── */
 
 .overlay {

@@ -11,41 +11,24 @@ import {
   TRANSFORM_PRESETS,
   LAYOUT_PRESETS,
 } from "./data";
-import type { DeviceFrameId, Transform3D } from "./data";
+import type { DeviceFrameId } from "./data";
+import {
+  state,
+  update,
+  undo,
+  redo,
+  canUndo,
+  canRedo,
+  beginTransaction,
+  commitTransaction,
+  newId,
+  subscribe,
+  initialState,
+} from "./state";
+import type { TextOverlay, ImageOverlay } from "./state";
 import { renderDevice } from "./devices";
-
-// ── State ──────────────────────────────────────────────────────────────────
-
-type Background =
-  | { kind: "solid"; value: string }
-  | { kind: "gradient"; value: string }
-  | { kind: "transparent" };
-
-interface State {
-  imageSrc: string | null;
-  aspectIdx: number;
-  background: Background;
-  padding: number;
-  radius: number;
-  shadow: number;
-  zoom: number;
-  rotate: number;
-  device: DeviceFrameId;
-  transform3d: Transform3D;
-}
-
-const state: State = {
-  imageSrc: null,
-  aspectIdx: 0,
-  background: { kind: "gradient", value: GRADIENTS[0] },
-  padding: 80,
-  radius: 16,
-  shadow: 40,
-  zoom: 1,
-  rotate: 0,
-  device: "none",
-  transform3d: TRANSFORM_PRESETS[0],
-};
+import { renderOverlays, attachOverlayDragHandlers } from "./overlays";
+import { loadDraft, clearDraft, makeAutoSave } from "./storage";
 
 // ── Helper: build swatch grid ──────────────────────────────────────────────
 
@@ -71,12 +54,12 @@ function swatchGrid(
 const app = document.querySelector<HTMLDivElement>("#app")!;
 app.innerHTML = `
 <div class="flex h-full w-full">
-  <!-- LEFT SIDEBAR -->
   <aside class="w-72 shrink-0 border-r border-line bg-white scroll-y">
     <div class="p-4 border-b border-line">
       <div class="flex gap-1 p-1 bg-zinc-100 rounded-lg" id="tabs">
         <button class="tab active" data-tab="mockup">Mockup</button>
         <button class="tab" data-tab="frame">Frame</button>
+        <button class="tab" data-tab="overlay">Overlay</button>
       </div>
       <div class="section-title">Aspect Ratio</div>
       <select id="aspect" class="w-full text-sm border border-line rounded-lg px-3 py-2 bg-white">
@@ -84,7 +67,6 @@ app.innerHTML = `
       </select>
     </div>
 
-    <!-- MOCKUP TAB -->
     <div class="tab-panel active p-4" data-panel="mockup">
       <div class="section-title">Background</div>
       <div class="flex gap-2 mb-3">
@@ -111,7 +93,6 @@ app.innerHTML = `
       ${swatchGrid("mysticSwatches", MYSTIC_GRADIENTS, "mystic")}
     </div>
 
-    <!-- FRAME TAB -->
     <div class="tab-panel p-4" data-panel="frame">
       <div class="section-title">Device</div>
       <div class="grid grid-cols-3 gap-2" id="devicePicker">
@@ -144,18 +125,51 @@ app.innerHTML = `
         <span>Shadow</span><span id="shadowVal">${state.shadow}</span>
       </label>
       <input id="shadow" type="range" min="0" max="100" value="${state.shadow}" />
+
+      <div class="section-title">Watermark</div>
+      <label class="flex items-center gap-2 text-sm cursor-pointer">
+        <input id="watermarkToggle" type="checkbox" class="w-4 h-4" />
+        Show "Made with Lumen"
+      </label>
+    </div>
+
+    <div class="tab-panel p-4" data-panel="overlay">
+      <div class="section-title">Add Layer</div>
+      <div class="grid grid-cols-2 gap-2">
+        <button class="btn btn-secondary justify-center" id="addText">+ Text</button>
+        <button class="btn btn-secondary justify-center" id="addImage">+ Image</button>
+      </div>
+
+      <div class="section-title">Layers</div>
+      <div id="layersList" class="space-y-1 text-sm"></div>
+
+      <div id="overlayProps"></div>
     </div>
   </aside>
 
-  <!-- CENTER STAGE -->
   <main class="flex-1 flex flex-col">
     <header class="h-14 border-b border-line flex items-center justify-between px-4 bg-white">
       <div class="flex items-center gap-3">
         <div class="font-semibold text-sm tracking-tight">✦ Lumen</div>
+        <div class="flex items-center gap-1">
+          <button id="undoBtn" class="icon-btn" title="Undo (Ctrl+Z)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>
+          </button>
+          <button id="redoBtn" class="icon-btn" title="Redo (Ctrl+Shift+Z)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"/></svg>
+          </button>
+        </div>
         <button id="reset" class="btn btn-secondary">Start Over</button>
       </div>
       <div class="flex items-center gap-2">
-        <button id="export" class="btn">↑ Export PNG</button>
+        <div class="export-group">
+          <button id="export" class="btn">↑ Export PNG</button>
+          <select id="exportScale" title="Resolution multiplier">
+            <option value="1">1x</option>
+            <option value="2">2x</option>
+            <option value="3">3x</option>
+          </select>
+        </div>
       </div>
     </header>
 
@@ -166,7 +180,6 @@ app.innerHTML = `
     </div>
   </main>
 
-  <!-- RIGHT SIDEBAR -->
   <aside class="w-64 shrink-0 border-l border-line bg-white scroll-y p-4">
     <div class="section-title">Layout Presets</div>
     <div class="grid grid-cols-2 gap-2" id="layoutPresets">
@@ -197,16 +210,19 @@ const frameWrap = document.getElementById("frameWrap") as HTMLDivElement;
 const stage = document.getElementById("stage") as HTMLDivElement;
 const aspectSelect = document.getElementById("aspect") as HTMLSelectElement;
 
+// Track preview scale for drag math
+let currentStageScale = 1;
+
 // ── Render ─────────────────────────────────────────────────────────────────
 
 function render() {
   const ratio = ASPECT_RATIOS[state.aspectIdx];
 
-  // Fit the frame inside the stage at preview scale
   const stageRect = stage.getBoundingClientRect();
   const maxW = stageRect.width - 64;
   const maxH = stageRect.height - 64;
   const scale = Math.min(maxW / ratio.w, maxH / ratio.h, 1);
+  currentStageScale = scale;
 
   frameWrap.style.width = `${ratio.w * scale}px`;
   frameWrap.style.height = `${ratio.h * scale}px`;
@@ -218,14 +234,12 @@ function render() {
   frame.style.padding = `${state.padding}px`;
   frame.style.perspective = `${state.transform3d.perspective}px`;
 
-  // Background
   if (state.background.kind === "transparent") {
     frame.style.background = "transparent";
   } else {
     frame.style.background = state.background.value;
   }
 
-  // Shadow CSS for the inner image / device
   const shadowStrength = state.shadow / 100;
   const shadowCss =
     state.shadow > 0
@@ -234,7 +248,6 @@ function render() {
         })`
       : "none";
 
-  // Combined transform: 3D preset + Z-axis rotation slider + zoom
   const t = state.transform3d;
   const innerTransform = `rotateX(${t.rx}deg) rotateY(${t.ry}deg) rotateZ(${
     t.rz + state.rotate
@@ -247,10 +260,11 @@ function render() {
     transform-style:preserve-3d;
   `;
 
+  let body = "";
   if (state.imageSrc) {
-    frame.innerHTML = renderDevice(state.device, state.imageSrc, innerStyle);
+    body += renderDevice(state.device, state.imageSrc, innerStyle);
   } else {
-    frame.innerHTML = `
+    body += `
       <div class="placeholder" style="border-radius:${state.radius}px;">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -259,19 +273,206 @@ function render() {
         </svg>
         <div>Drop or Paste</div>
         <div class="text-sm font-normal text-zinc-400">Images & Videos</div>
-      </div>
-    `;
+      </div>`;
   }
+
+  body += renderOverlays(state);
+
+  if (state.watermark) {
+    body += `<div class="watermark">✦ Made with Lumen</div>`;
+  }
+
+  frame.innerHTML = body;
+
+  renderUndoRedo();
+  renderLayersList();
+  renderOverlayProps();
+}
+
+function renderUndoRedo() {
+  (document.getElementById("undoBtn") as HTMLButtonElement).disabled = !canUndo();
+  (document.getElementById("redoBtn") as HTMLButtonElement).disabled = !canRedo();
+}
+
+function renderLayersList() {
+  const list = document.getElementById("layersList")!;
+  if (state.overlays.length === 0) {
+    list.innerHTML = `<div class="text-xs text-zinc-400 italic">No layers yet</div>`;
+    return;
+  }
+  list.innerHTML = state.overlays
+    .map((o) => {
+      const label = o.type === "text" ? `T · ${o.text.slice(0, 20)}` : "Image";
+      const active = o.id === state.selectedOverlayId ? "bg-zinc-100" : "";
+      return `
+        <div class="flex items-center gap-2 px-2 py-1.5 rounded ${active} hover:bg-zinc-50 cursor-pointer" data-layer-id="${o.id}">
+          <span class="text-xs flex-1 truncate">${label}</span>
+          <button class="text-zinc-400 hover:text-red-500 text-xs" data-remove-layer="${o.id}">✕</button>
+        </div>`;
+    })
+    .join("");
+}
+
+function renderOverlayProps() {
+  const container = document.getElementById("overlayProps")!;
+  const overlay = state.overlays.find((o) => o.id === state.selectedOverlayId);
+  if (!overlay) {
+    container.innerHTML = "";
+    return;
+  }
+  if (overlay.type === "text") {
+    container.innerHTML = `
+      <div class="props-panel">
+        <label>Text</label>
+        <input id="propText" type="text" value="${overlay.text.replace(/"/g, "&quot;")}" />
+        <div class="row-2">
+          <div>
+            <label>Size</label>
+            <input id="propSize" type="number" min="8" max="400" value="${overlay.fontSize}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+          </div>
+          <div>
+            <label>Weight</label>
+            <select id="propWeight" class="w-full text-sm border border-zinc-200 rounded px-2 py-1">
+              ${[300, 400, 500, 600, 700, 800, 900]
+                .map(
+                  (w) =>
+                    `<option value="${w}" ${w === overlay.fontWeight ? "selected" : ""}>${w}</option>`,
+                )
+                .join("")}
+            </select>
+          </div>
+        </div>
+        <label>Font</label>
+        <select id="propFont" class="w-full text-sm border border-zinc-200 rounded px-2 py-1">
+          ${[
+            "system-ui, sans-serif",
+            "Georgia, serif",
+            "'Courier New', monospace",
+            "'Arial Black', sans-serif",
+            "'Helvetica Neue', sans-serif",
+          ]
+            .map(
+              (f) =>
+                `<option value="${f}" ${f === overlay.fontFamily ? "selected" : ""}>${f.split(",")[0].replace(/'/g, "")}</option>`,
+            )
+            .join("")}
+        </select>
+        <div class="row-2">
+          <div>
+            <label>Color</label>
+            <input id="propColor" type="color" class="color-input" value="${overlay.color}" />
+          </div>
+          <div>
+            <label>Rotation</label>
+            <input id="propRot" type="number" min="-180" max="180" value="${overlay.rotation}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+          </div>
+        </div>
+        <label class="flex items-center gap-2 mt-2">
+          <input id="propShadow" type="checkbox" ${overlay.shadow ? "checked" : ""} /> Drop shadow
+        </label>
+      </div>`;
+    bindTextProps(overlay);
+  } else {
+    container.innerHTML = `
+      <div class="props-panel">
+        <label>Width</label>
+        <input id="propWidth" type="range" min="5" max="80" value="${overlay.width}" />
+        <label>Rotation</label>
+        <input id="propRot" type="number" min="-180" max="180" value="${overlay.rotation}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+      </div>`;
+    bindImageProps(overlay);
+  }
+}
+
+function bindTextProps(o: TextOverlay) {
+  const text = document.getElementById("propText") as HTMLInputElement;
+  text.addEventListener("input", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as TextOverlay;
+      cur.text = text.value;
+    }, false);
+  });
+  text.addEventListener("change", () => commitTransaction());
+  text.addEventListener("focus", () => beginTransaction());
+
+  const size = document.getElementById("propSize") as HTMLInputElement;
+  size.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as TextOverlay;
+      cur.fontSize = parseInt(size.value, 10);
+    });
+  });
+
+  const weight = document.getElementById("propWeight") as HTMLSelectElement;
+  weight.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as TextOverlay;
+      cur.fontWeight = parseInt(weight.value, 10);
+    });
+  });
+
+  const font = document.getElementById("propFont") as HTMLSelectElement;
+  font.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as TextOverlay;
+      cur.fontFamily = font.value;
+    });
+  });
+
+  const color = document.getElementById("propColor") as HTMLInputElement;
+  color.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as TextOverlay;
+      cur.color = color.value;
+    });
+  });
+
+  const rot = document.getElementById("propRot") as HTMLInputElement;
+  rot.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as TextOverlay;
+      cur.rotation = parseInt(rot.value, 10);
+    });
+  });
+
+  const shadow = document.getElementById("propShadow") as HTMLInputElement;
+  shadow.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as TextOverlay;
+      cur.shadow = shadow.checked;
+    });
+  });
+}
+
+function bindImageProps(o: ImageOverlay) {
+  const width = document.getElementById("propWidth") as HTMLInputElement;
+  width.addEventListener("input", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as ImageOverlay;
+      cur.width = parseInt(width.value, 10);
+    }, false);
+  });
+  width.addEventListener("change", () => commitTransaction());
+  width.addEventListener("mousedown", () => beginTransaction());
+
+  const rot = document.getElementById("propRot") as HTMLInputElement;
+  rot.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as ImageOverlay;
+      cur.rotation = parseInt(rot.value, 10);
+    });
+  });
 }
 
 // ── Image loading ──────────────────────────────────────────────────────────
 
-function loadImageFromFile(file: File) {
+function loadMainImage(file: File) {
   if (!file.type.startsWith("image/")) return;
   const reader = new FileReader();
   reader.onload = (e) => {
-    state.imageSrc = e.target?.result as string;
-    render();
+    update((s) => {
+      s.imageSrc = e.target?.result as string;
+    });
   };
   reader.readAsDataURL(file);
 }
@@ -287,26 +488,30 @@ stage.addEventListener("drop", (e) => {
   e.preventDefault();
   stage.style.outline = "";
   const file = e.dataTransfer?.files?.[0];
-  if (file) loadImageFromFile(file);
+  if (file) loadMainImage(file);
 });
 window.addEventListener("paste", (e) => {
+  if ((e.target as HTMLElement).matches("input, textarea")) return;
   const items = e.clipboardData?.items;
   if (!items) return;
   for (const item of Array.from(items)) {
     if (item.type.startsWith("image/")) {
       const file = item.getAsFile();
-      if (file) loadImageFromFile(file);
+      if (file) loadMainImage(file);
     }
   }
 });
-frame.addEventListener("click", () => {
+frame.addEventListener("click", (e) => {
+  // Only trigger upload if clicking the placeholder (no image yet, no overlay)
   if (state.imageSrc) return;
+  const target = e.target as HTMLElement;
+  if (target.closest("[data-overlay-id]")) return;
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/*";
   input.onchange = () => {
     const file = input.files?.[0];
-    if (file) loadImageFromFile(file);
+    if (file) loadMainImage(file);
   };
   input.click();
 });
@@ -314,18 +519,25 @@ frame.addEventListener("click", () => {
 // ── Controls ───────────────────────────────────────────────────────────────
 
 aspectSelect.addEventListener("change", () => {
-  state.aspectIdx = parseInt(aspectSelect.value, 10);
-  render();
+  update((s) => {
+    s.aspectIdx = parseInt(aspectSelect.value, 10);
+  });
 });
 
-function bindRange(id: string, key: keyof State, suffix = "px") {
+function bindRange(id: string, key: keyof typeof state, suffix = "px") {
   const input = document.getElementById(id) as HTMLInputElement;
   const valEl = document.getElementById(`${id}Val`);
+  input.addEventListener("mousedown", () => beginTransaction());
   input.addEventListener("input", () => {
-    (state as any)[key] = parseInt(input.value, 10);
+    update(
+      (s) => {
+        (s as any)[key] = parseInt(input.value, 10);
+      },
+      false,
+    );
     if (valEl) valEl.textContent = `${input.value}${suffix}`;
-    render();
   });
+  input.addEventListener("change", () => commitTransaction());
 }
 bindRange("padding", "padding");
 bindRange("radius", "radius");
@@ -334,13 +546,19 @@ bindRange("rotate", "rotate", "°");
 
 const zoomInput = document.getElementById("zoom") as HTMLInputElement;
 const zoomVal = document.getElementById("zoomVal")!;
+zoomInput.addEventListener("mousedown", () => beginTransaction());
 zoomInput.addEventListener("input", () => {
-  state.zoom = parseInt(zoomInput.value, 10) / 100;
+  update(
+    (s) => {
+      s.zoom = parseInt(zoomInput.value, 10) / 100;
+    },
+    false,
+  );
   zoomVal.textContent = `${zoomInput.value}%`;
-  render();
 });
+zoomInput.addEventListener("change", () => commitTransaction());
 
-// Background swatches: clear other groups, set this one active
+// Background swatches
 const swatchGroups = [
   { id: "solidSwatches", attr: "solid", values: SOLID_COLORS, kind: "solid" as const },
   { id: "gradientSwatches", attr: "gradient", values: GRADIENTS, kind: "gradient" as const },
@@ -359,64 +577,68 @@ swatchGroups.forEach((group) => {
     const idxAttr = t.dataset[group.attr];
     if (idxAttr === undefined) return;
     const idx = parseInt(idxAttr, 10);
-    state.background = { kind: group.kind, value: group.values[idx] };
+    update((s) => {
+      s.background = { kind: group.kind, value: group.values[idx] };
+    });
     clearSwatchActive();
     t.classList.add("active");
-    render();
   });
 });
 
-// "None" background button
 document.querySelectorAll("[data-bg]").forEach((btn) => {
   btn.addEventListener("click", () => {
     if ((btn as HTMLElement).dataset.bg === "transparent") {
-      state.background = { kind: "transparent" };
+      update((s) => {
+        s.background = { kind: "transparent" };
+      });
       clearSwatchActive();
-      render();
     }
   });
 });
 
-// Color picker
 const colorPicker = document.getElementById("colorPicker") as HTMLInputElement;
 colorPicker.addEventListener("input", () => {
-  state.background = { kind: "solid", value: colorPicker.value };
+  update((s) => {
+    s.background = { kind: "solid", value: colorPicker.value };
+  }, false);
   clearSwatchActive();
-  render();
 });
+colorPicker.addEventListener("change", () => commitTransaction());
+colorPicker.addEventListener("focus", () => beginTransaction());
 
-// Device picker
 document.getElementById("devicePicker")!.addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest("[data-device]") as HTMLElement;
   if (!btn) return;
-  state.device = btn.dataset.device as DeviceFrameId;
+  update((s) => {
+    s.device = btn.dataset.device as DeviceFrameId;
+  });
   document
     .querySelectorAll("#devicePicker .device-btn")
     .forEach((b) => b.classList.remove("active"));
   btn.classList.add("active");
-  render();
 });
 
-// 3D transform picker
 document.getElementById("transformPicker")!.addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest("[data-transform]") as HTMLElement;
   if (!btn) return;
   const idx = parseInt(btn.dataset.transform!, 10);
-  state.transform3d = TRANSFORM_PRESETS[idx];
+  update((s) => {
+    s.transform3d = TRANSFORM_PRESETS[idx];
+  });
   document
     .querySelectorAll("#transformPicker .preset-btn")
     .forEach((b) => b.classList.remove("active"));
   btn.classList.add("active");
-  render();
 });
 
-// Layout presets
 document.getElementById("layoutPresets")!.addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest("[data-preset]") as HTMLElement;
   if (!btn) return;
   const preset = LAYOUT_PRESETS.find((p) => p.id === btn.dataset.preset)!;
-  state.zoom = preset.zoom;
-  state.rotate = preset.rotate;
+  update((s) => {
+    s.zoom = preset.zoom;
+    s.rotate = preset.rotate;
+  });
   zoomInput.value = String(preset.zoom * 100);
   zoomVal.textContent = `${Math.round(preset.zoom * 100)}%`;
   (document.getElementById("rotate") as HTMLInputElement).value = String(
@@ -427,10 +649,8 @@ document.getElementById("layoutPresets")!.addEventListener("click", (e) => {
     .querySelectorAll("#layoutPresets .preset-btn")
     .forEach((b) => b.classList.remove("active"));
   btn.classList.add("active");
-  render();
 });
 
-// Tabs (Mockup / Frame)
 document.getElementById("tabs")!.addEventListener("click", (e) => {
   const tab = (e.target as HTMLElement).closest(".tab") as HTMLElement;
   if (!tab) return;
@@ -443,14 +663,170 @@ document.getElementById("tabs")!.addEventListener("click", (e) => {
   document.querySelector(`[data-panel="${target}"]`)?.classList.add("active");
 });
 
+// Watermark toggle
+document
+  .getElementById("watermarkToggle")!
+  .addEventListener("change", (e) => {
+    update((s) => {
+      s.watermark = (e.target as HTMLInputElement).checked;
+    });
+  });
+
 // Reset
-document.getElementById("reset")!.addEventListener("click", () => {
-  if (!confirm("¿Empezar de nuevo? Se perderá la imagen.")) return;
-  state.imageSrc = null;
-  render();
+document.getElementById("reset")!.addEventListener("click", async () => {
+  if (!confirm("¿Empezar de nuevo? Se perderá el trabajo actual.")) return;
+  update((s) => {
+    Object.assign(s, structuredClone(initialState));
+  });
+  await clearDraft();
 });
 
+// ── Overlays ──────────────────────────────────────────────────────────────
+
+document.getElementById("addText")!.addEventListener("click", () => {
+  update((s) => {
+    const o: TextOverlay = {
+      id: newId(),
+      type: "text",
+      text: "Hello, Lumen!",
+      x: 50,
+      y: 50,
+      fontSize: 96,
+      color: "#ffffff",
+      fontWeight: 700,
+      fontFamily: "system-ui, sans-serif",
+      shadow: true,
+      rotation: 0,
+    };
+    s.overlays.push(o);
+    s.selectedOverlayId = o.id;
+  });
+});
+
+document.getElementById("addImage")!.addEventListener("click", () => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.onchange = () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const src = e.target?.result as string;
+      update((s) => {
+        const o: ImageOverlay = {
+          id: newId(),
+          type: "image",
+          src,
+          x: 50,
+          y: 50,
+          width: 30,
+          rotation: 0,
+        };
+        s.overlays.push(o);
+        s.selectedOverlayId = o.id;
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+});
+
+document.getElementById("layersList")!.addEventListener("click", (e) => {
+  const target = e.target as HTMLElement;
+  const removeId = target.dataset.removeLayer;
+  if (removeId) {
+    e.stopPropagation();
+    update((s) => {
+      s.overlays = s.overlays.filter((o) => o.id !== removeId);
+      if (s.selectedOverlayId === removeId) s.selectedOverlayId = null;
+    });
+    return;
+  }
+  const row = target.closest("[data-layer-id]") as HTMLElement | null;
+  if (row) {
+    update((s) => {
+      s.selectedOverlayId = row.dataset.layerId!;
+    });
+  }
+});
+
+// Drag overlays
+attachOverlayDragHandlers(
+  frame,
+  () => currentStageScale,
+  {
+    onSelect: (id) => {
+      update((s) => {
+        s.selectedOverlayId = id;
+      });
+    },
+    onMove: (id, x, y) => {
+      update(
+        (s) => {
+          const o = s.overlays.find((o) => o.id === id);
+          if (o) {
+            o.x = x;
+            o.y = y;
+          }
+        },
+        false,
+      );
+    },
+    onCommit: () => {
+      // Push history once at end of drag
+      // The first onMove during drag should have started transaction; we approximate
+      // by snapshotting once here. Acceptable simplification.
+    },
+  },
+);
+// Begin transaction at mousedown on overlay (best-effort)
+frame.addEventListener("mousedown", (e) => {
+  const t = e.target as HTMLElement;
+  if (t.closest("[data-overlay-id]")) beginTransaction();
+});
+frame.addEventListener("mouseup", () => {
+  commitTransaction();
+});
+
+// Delete key removes selected overlay
+window.addEventListener("keydown", (e) => {
+  if ((e.target as HTMLElement).matches("input, textarea, select")) return;
+  if ((e.key === "Delete" || e.key === "Backspace") && state.selectedOverlayId) {
+    update((s) => {
+      s.overlays = s.overlays.filter((o) => o.id !== s.selectedOverlayId);
+      s.selectedOverlayId = null;
+    });
+    e.preventDefault();
+  }
+  // Undo / redo
+  const meta = e.ctrlKey || e.metaKey;
+  if (meta && e.key.toLowerCase() === "z") {
+    e.preventDefault();
+    if (e.shiftKey) {
+      redo();
+    } else {
+      undo();
+    }
+  } else if (meta && e.key.toLowerCase() === "y") {
+    e.preventDefault();
+    redo();
+  }
+});
+
+document.getElementById("undoBtn")!.addEventListener("click", () => undo());
+document.getElementById("redoBtn")!.addEventListener("click", () => redo());
+
 // ── Export ─────────────────────────────────────────────────────────────────
+
+const exportScaleSelect = document.getElementById(
+  "exportScale",
+) as HTMLSelectElement;
+exportScaleSelect.addEventListener("change", () => {
+  update((s) => {
+    s.exportScale = parseInt(exportScaleSelect.value, 10) as 1 | 2 | 3;
+  });
+});
 
 document.getElementById("export")!.addEventListener("click", async () => {
   if (!state.imageSrc) {
@@ -465,15 +841,19 @@ document.getElementById("export")!.addEventListener("click", async () => {
   frameWrap.style.width = `${ratio.w}px`;
   frameWrap.style.height = `${ratio.h}px`;
 
+  const exportBtn = document.getElementById("export") as HTMLButtonElement;
+  exportBtn.disabled = true;
+  exportBtn.textContent = "Rendering...";
+
   try {
     const dataUrl = await toPng(frame, {
-      pixelRatio: 1,
+      pixelRatio: state.exportScale,
       cacheBust: true,
       backgroundColor:
         state.background.kind === "transparent" ? undefined : "transparent",
     });
     const a = document.createElement("a");
-    a.download = `lumen-${Date.now()}.png`;
+    a.download = `lumen-${Date.now()}@${state.exportScale}x.png`;
     a.href = dataUrl;
     a.click();
   } catch (err) {
@@ -483,9 +863,51 @@ document.getElementById("export")!.addEventListener("click", async () => {
     frame.style.transform = prevTransform;
     frameWrap.style.width = prevWrapW;
     frameWrap.style.height = prevWrapH;
+    exportBtn.disabled = false;
+    exportBtn.textContent = "↑ Export PNG";
     render();
   }
 });
+
+// ── Persistence ────────────────────────────────────────────────────────────
+
+const autoSave = makeAutoSave(() => state, 1500);
+subscribe(() => {
+  render();
+  autoSave();
+});
+
+(async () => {
+  try {
+    const draft = await loadDraft();
+    if (draft && draft.imageSrc) {
+      showRestoreToast(draft);
+    }
+  } catch (e) {
+    console.warn("[lumen] failed to read draft", e);
+  }
+})();
+
+function showRestoreToast(draft: typeof state) {
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.innerHTML = `
+    <span>Restore previous session?</span>
+    <button class="btn" id="restoreYes">Restore</button>
+    <button class="btn btn-secondary" id="restoreNo">Dismiss</button>
+  `;
+  document.body.appendChild(el);
+  document.getElementById("restoreYes")!.addEventListener("click", () => {
+    update((s) => {
+      Object.assign(s, draft);
+    });
+    el.remove();
+  });
+  document.getElementById("restoreNo")!.addEventListener("click", async () => {
+    await clearDraft();
+    el.remove();
+  });
+}
 
 // ── Init ───────────────────────────────────────────────────────────────────
 

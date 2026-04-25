@@ -428,3 +428,169 @@ input[type="range"] {
   background: #111;
   color: white;
 }
+
+/* ── Overlays ─────────────────────────────────────────────────────────── */
+
+.overlay {
+  position: absolute;
+  cursor: grab;
+  user-select: none;
+  z-index: 10;
+  outline: 2px solid transparent;
+  outline-offset: 4px;
+  transition: outline-color 0.1s ease;
+}
+.overlay:active {
+  cursor: grabbing;
+}
+.overlay:hover {
+  outline-color: rgba(59, 130, 246, 0.5);
+}
+.overlay.selected {
+  outline-color: #3b82f6;
+}
+.overlay-text {
+  white-space: nowrap;
+  line-height: 1;
+}
+.overlay-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+}
+
+/* ── Watermark ────────────────────────────────────────────────────────── */
+
+.watermark {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  z-index: 20;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  padding: 6px 12px;
+  border-radius: 8px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+/* ── Header buttons ───────────────────────────────────────────────────── */
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: white;
+  border: 1px solid #e5e5e5;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  color: #4b5563;
+}
+.icon-btn:hover:not(:disabled) {
+  background: #f4f4f4;
+  color: #111;
+}
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.export-group {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111;
+}
+.export-group .btn {
+  border-radius: 0;
+  background: transparent;
+}
+.export-group select {
+  background: #2a2a2a;
+  color: white;
+  border: none;
+  padding: 0 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* ── Overlay properties panel ─────────────────────────────────────────── */
+
+.props-panel {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  margin-top: 8px;
+}
+.props-panel input[type="text"] {
+  width: 100%;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: white;
+}
+.props-panel label {
+  font-size: 11px;
+  color: #6b7280;
+  display: block;
+  margin-top: 8px;
+  margin-bottom: 2px;
+  font-weight: 500;
+}
+.props-panel .row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.color-input {
+  width: 100%;
+  height: 32px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+  padding: 2px;
+}
+
+/* ── Toast for restore prompt ─────────────────────────────────────────── */
+
+.toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: white;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.12);
+  border-radius: 10px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  z-index: 1000;
+  font-size: 13px;
+  animation: toast-in 0.25s ease;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+.toast .btn {
+  font-size: 12px;
+  padding: 4px 10px;
+}

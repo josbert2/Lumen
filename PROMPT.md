@@ -41,23 +41,25 @@ All in the browser. Nothing leaves the user's machine.
 - [x] PNG export at real resolution
 - [x] Start Over reset
 
-### 🔄 Phase 1 — Visual depth (in progress)
+### ✅ Phase 1 — Visual depth (done)
 
-- [ ] **Device frames**: Browser (Safari/Chrome), MacBook, iPhone, iPad, Apple Watch
-- [ ] **3D transforms**: 30+ presets (isometric, tilt, orbit, breathe) using CSS `perspective` + `rotateX/Y/Z`
-- [ ] More background palettes: Glass, Cosmic, Mystic (from shots.so)
+- [x] **Device frames**: Browser (Safari, Chrome, Dark), MacBook, iPhone, iPad
+- [x] **3D transforms**: 12 presets (flat, tilt, isometric, orbit, spin, drift, card, deep…) using CSS `perspective` + `rotateX/Y/Z`
+- [x] More background palettes: Glass, Cosmic, Mystic
 - [ ] Background blur + noise filters
-- [ ] Solid color picker integrated into Solid section
+- [x] Solid color picker integrated into Solid section
+- [x] More aspect ratios: Twitter, Story
 
-### 📋 Phase 2 — Pro tools
+### ✅ Phase 2 — Pro tools (done)
 
-- [ ] Undo / redo (state history)
-- [ ] Text overlays with custom fonts, shadows, positioning
-- [ ] Image overlays (decorative layers, logos)
-- [ ] Annotations: arrows, shapes, blur regions
-- [ ] Watermark (configurable, branded)
-- [ ] IndexedDB drafts (auto-save)
-- [ ] Export presets: 1x / 2x / 3x / custom
+- [x] Undo / redo (state history with transaction batching for sliders)
+- [x] Text overlays: text, font, weight, size, color, rotation, shadow — draggable
+- [x] Image overlays: upload + drag + resize + rotate
+- [x] Layer panel: list, select, delete (or `Delete` key)
+- [x] Watermark toggle ("Made with Lumen")
+- [x] IndexedDB drafts: auto-save 1.5s after change, restore prompt on reload
+- [x] Export presets: 1x / 2x / 3x
+- [ ] Annotations: arrows, shapes, blur regions (deferred to Phase 3)
 
 ### 🚀 Phase 3 — Big features (separate effort)
 

@@ -79,10 +79,15 @@ All in the browser. Nothing leaves the user's machine.
 - [x] Progress bar during render
 - [x] Auto-cap dimensions to 720px max for reasonable file size
 
-### 📋 Phase 5 — Polish & extras (deferred)
+### 🔄 Phase 5 — Polish & extras (in progress)
 
+- [x] **MP4 export via WebCodecs + mp4-muxer** (no FFmpeg WASM needed)
+  - 4 quality tiers (2 / 5 / 10 / 20 Mbps), 3 fps tiers (20 / 30 / 60)
+  - Auto-cap to 1280px max, even-dimension enforcement for H.264
+  - Codec auto-picked by resolution (H.264 levels 3.0 → 5.0)
+  - Feature-detected: shows fallback message if browser lacks WebCodecs
+- [ ] WebM export (VP9 via webm-muxer)
 - [ ] Custom keyframe editor (vs. baked presets)
-- [ ] MP4 / WebM export via WebCodecs (and/or FFmpeg WASM)
 - [ ] Tweet / code snippet import
 - [ ] Unsplash integration for backgrounds
 - [ ] Migrate to React + Zustand + Konva (only if codebase becomes unwieldy)

@@ -44,6 +44,7 @@ import {
   type AnimationOverride,
 } from "./animation";
 import { exportGif } from "./gif-export";
+import { exportMp4, isMp4Supported } from "./mp4-export";
 
 // ── Helper: build swatch grid ──────────────────────────────────────────────
 
@@ -215,13 +216,38 @@ app.innerHTML = `
       </div>
 
       <div class="section-title">Export</div>
-      <button id="exportGif" class="btn w-full justify-center">↑ Export GIF</button>
-      <div class="text-xs text-zinc-500 mt-2">Renders ${state.animationDuration}s at 20 fps. Larger sizes take longer.</div>
-      <div id="gifProgress" class="mt-3 hidden">
+      <div class="grid grid-cols-2 gap-2">
+        <button id="exportGif" class="btn btn-secondary justify-center">GIF</button>
+        <button id="exportMp4" class="btn justify-center">MP4</button>
+      </div>
+
+      <label class="text-xs text-zinc-500 flex items-center justify-between mt-3">
+        <span>Quality (MP4)</span>
+        <select id="mp4Bitrate" class="text-xs bg-white border border-zinc-200 rounded px-2 py-0.5">
+          <option value="2000000">Low · 2 Mbps</option>
+          <option value="5000000" selected>Medium · 5 Mbps</option>
+          <option value="10000000">High · 10 Mbps</option>
+          <option value="20000000">Ultra · 20 Mbps</option>
+        </select>
+      </label>
+      <label class="text-xs text-zinc-500 flex items-center justify-between mt-2">
+        <span>FPS</span>
+        <select id="videoFps" class="text-xs bg-white border border-zinc-200 rounded px-2 py-0.5">
+          <option value="20">20</option>
+          <option value="30" selected>30</option>
+          <option value="60">60</option>
+        </select>
+      </label>
+
+      <div id="mp4Unsupported" class="text-xs text-amber-600 mt-2 hidden">
+        WebCodecs not available in this browser — use GIF or try Chrome.
+      </div>
+
+      <div id="videoProgress" class="mt-3 hidden">
         <div class="h-2 bg-zinc-100 rounded overflow-hidden">
-          <div id="gifProgressBar" class="h-full bg-zinc-900 transition-all" style="width:0%"></div>
+          <div id="videoProgressBar" class="h-full bg-zinc-900 transition-all" style="width:0%"></div>
         </div>
-        <div id="gifProgressLabel" class="text-xs text-zinc-500 mt-1">0%</div>
+        <div id="videoProgressLabel" class="text-xs text-zinc-500 mt-1">0%</div>
       </div>
     </div>
   </aside>
@@ -1422,9 +1448,9 @@ document.getElementById("exportGif")!.addEventListener("click", async () => {
   frameWrap.style.width = `${ratio.w}px`;
   frameWrap.style.height = `${ratio.h}px`;
 
-  const progressEl = document.getElementById("gifProgress")!;
-  const progressBar = document.getElementById("gifProgressBar")!;
-  const progressLabel = document.getElementById("gifProgressLabel")!;
+  const progressEl = document.getElementById("videoProgress")!;
+  const progressBar = document.getElementById("videoProgressBar")!;
+  const progressLabel = document.getElementById("videoProgressLabel")!;
   const exportBtn = document.getElementById("exportGif") as HTMLButtonElement;
   progressEl.classList.remove("hidden");
   exportBtn.disabled = true;
@@ -1470,7 +1496,107 @@ document.getElementById("exportGif")!.addEventListener("click", async () => {
     frameWrap.style.width = prevWrapW;
     frameWrap.style.height = prevWrapH;
     exportBtn.disabled = false;
-    exportBtn.textContent = "↑ Export GIF";
+    exportBtn.textContent = "GIF";
+    setTimeout(() => progressEl.classList.add("hidden"), 1200);
+    render();
+  }
+});
+
+// ── MP4 Export ────────────────────────────────────────────────────────────
+
+if (!isMp4Supported()) {
+  document.getElementById("mp4Unsupported")!.classList.remove("hidden");
+  (document.getElementById("exportMp4") as HTMLButtonElement).disabled = true;
+}
+
+document.getElementById("exportMp4")!.addEventListener("click", async () => {
+  if (!isMp4Supported()) return;
+  if (!state.imageSrc) {
+    alert("Sube una imagen primero.");
+    return;
+  }
+  if (state.animationPresetId === "none") {
+    alert("Elige un preset de animación primero.");
+    return;
+  }
+  stopAnimation();
+
+  const ratio = ASPECT_RATIOS[state.aspectIdx];
+  // Higher cap for MP4 since it compresses far better than GIF
+  const maxDim = 1280;
+  const exportScale = Math.min(1, maxDim / Math.max(ratio.w, ratio.h));
+  const w = Math.round(ratio.w * exportScale);
+  const h = Math.round(ratio.h * exportScale);
+
+  const prevTransform = frame.style.transform;
+  const prevWrapW = frameWrap.style.width;
+  const prevWrapH = frameWrap.style.height;
+
+  frame.style.transform = "scale(1)";
+  frameWrap.style.width = `${ratio.w}px`;
+  frameWrap.style.height = `${ratio.h}px`;
+
+  const progressEl = document.getElementById("videoProgress")!;
+  const progressBar = document.getElementById("videoProgressBar")!;
+  const progressLabel = document.getElementById("videoProgressLabel")!;
+  const exportBtn = document.getElementById("exportMp4") as HTMLButtonElement;
+  progressEl.classList.remove("hidden");
+  exportBtn.disabled = true;
+  exportBtn.textContent = "Rendering…";
+
+  const preset = getPresetById(state.animationPresetId);
+  const bitrate = parseInt(
+    (document.getElementById("mp4Bitrate") as HTMLSelectElement).value,
+    10,
+  );
+  const fps = parseInt(
+    (document.getElementById("videoFps") as HTMLSelectElement).value,
+    10,
+  );
+
+  try {
+    const blob = await exportMp4({
+      fps,
+      duration: state.animationDuration,
+      width: w,
+      height: h,
+      bitrate,
+      target: frame,
+      setAnimationProgress: (t) => {
+        animationOverride = preset.apply(t);
+        render();
+        frame.style.transform = "scale(1)";
+        frameWrap.style.width = `${ratio.w}px`;
+        frameWrap.style.height = `${ratio.h}px`;
+      },
+      flush: () =>
+        new Promise((r) =>
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => r(undefined)),
+          ),
+        ),
+      onProgress: (i, total) => {
+        const pct = Math.round((i / total) * 100);
+        progressBar.style.width = `${pct}%`;
+        progressLabel.textContent = `${pct}% · ${i}/${total}`;
+      },
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lumen-${Date.now()}.mp4`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error(err);
+    alert(`Falló la exportación MP4: ${(err as Error).message}`);
+  } finally {
+    animationOverride = null;
+    frame.style.transform = prevTransform;
+    frameWrap.style.width = prevWrapW;
+    frameWrap.style.height = prevWrapH;
+    exportBtn.disabled = false;
+    exportBtn.textContent = "MP4";
     setTimeout(() => progressEl.classList.add("hidden"), 1200);
     render();
   }

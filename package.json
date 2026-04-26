@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "gifenc": "^1.0.3",
-    "html-to-image": "^1.11.13"
+    "html-to-image": "^1.11.13",
+    "mp4-muxer": "^5.2.2"
   }
 }

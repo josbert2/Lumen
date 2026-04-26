@@ -86,7 +86,9 @@ All in the browser. Nothing leaves the user's machine.
   - Auto-cap to 1280px max, even-dimension enforcement for H.264
   - Codec auto-picked by resolution (H.264 levels 3.0 → 5.0)
   - Feature-detected: shows fallback message if browser lacks WebCodecs
-- [ ] WebM export (VP9 via webm-muxer)
+- [x] **WebM export** (VP9 via webm-muxer) — better Firefox support
+- [x] **Stage "Animate" button** — pill at center-bottom of stage like shots.so
+- [x] **Space key shortcut** — toggle play/pause (when not focused in inputs)
 - [ ] Custom keyframe editor (vs. baked presets)
 - [ ] Tweet / code snippet import
 - [ ] Unsplash integration for backgrounds

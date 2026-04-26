@@ -454,6 +454,39 @@ input[type="range"] {
   filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.9));
 }
 
+/* ── Stage "Animate" button (like shots.so) ───────────────────────────── */
+
+.stage-animate-btn {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  background: white;
+  color: #111;
+  border: 1px solid #e5e5e5;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
+  transition: all 0.15s ease;
+  z-index: 100;
+}
+.stage-animate-btn:hover {
+  background: #fafafa;
+  transform: translateX(-50%) translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+}
+.stage-animate-btn.playing {
+  background: #111;
+  color: white;
+  border-color: #111;
+}
+
 /* ── Frame in drawing mode ────────────────────────────────────────────── */
 
 .frame.drawing,

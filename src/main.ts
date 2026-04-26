@@ -45,6 +45,7 @@ import {
 } from "./animation";
 import { exportGif } from "./gif-export";
 import { exportMp4, isMp4Supported } from "./mp4-export";
+import { exportWebm } from "./webm-export";
 
 // ── Helper: build swatch grid ──────────────────────────────────────────────
 
@@ -216,9 +217,10 @@ app.innerHTML = `
       </div>
 
       <div class="section-title">Export</div>
-      <div class="grid grid-cols-2 gap-2">
+      <div class="grid grid-cols-3 gap-2">
         <button id="exportGif" class="btn btn-secondary justify-center">GIF</button>
         <button id="exportMp4" class="btn justify-center">MP4</button>
+        <button id="exportWebm" class="btn btn-secondary justify-center">WebM</button>
       </div>
 
       <label class="text-xs text-zinc-500 flex items-center justify-between mt-3">
@@ -278,10 +280,14 @@ app.innerHTML = `
       </div>
     </header>
 
-    <div class="flex-1 stage" id="stage">
+    <div class="flex-1 stage relative" id="stage">
       <div id="frameWrap" style="position:relative;">
         <div class="frame" id="frame"></div>
       </div>
+      <button id="stageAnimate" class="stage-animate-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+        Animate
+      </button>
     </div>
   </main>
 
@@ -1366,12 +1372,14 @@ function startAnimation() {
   animStartTime = performance.now();
   animRafId = requestAnimationFrame(tickAnimation);
   (document.getElementById("animPlay") as HTMLButtonElement).textContent = "❚❚ Pause";
+  document.getElementById("stageAnimate")?.classList.add("playing");
 }
 function stopAnimation() {
   if (animRafId !== null) cancelAnimationFrame(animRafId);
   animRafId = null;
   animationOverride = null;
   (document.getElementById("animPlay") as HTMLButtonElement).textContent = "▶ Play";
+  document.getElementById("stageAnimate")?.classList.remove("playing");
   render();
 }
 
@@ -1409,14 +1417,32 @@ document.getElementById("animLoop")!.addEventListener("change", (e) => {
   });
 });
 
-document.getElementById("animPlay")!.addEventListener("click", () => {
+function togglePlayPause() {
   if (animRafId !== null) {
     stopAnimation();
   } else {
+    if (state.animationPresetId === "none") {
+      // Hint user to pick a preset
+      const tab = document.querySelector('[data-tab="animate"]') as HTMLElement;
+      tab?.click();
+      return;
+    }
     startAnimation();
   }
-});
+}
+
+document.getElementById("animPlay")!.addEventListener("click", togglePlayPause);
 document.getElementById("animStop")!.addEventListener("click", () => stopAnimation());
+document.getElementById("stageAnimate")!.addEventListener("click", togglePlayPause);
+
+// Space toggles play/pause when not in an input
+window.addEventListener("keydown", (e) => {
+  if (e.code !== "Space") return;
+  const t = e.target as HTMLElement;
+  if (t.matches("input, textarea, select")) return;
+  e.preventDefault();
+  togglePlayPause();
+});
 
 // ── GIF Export ────────────────────────────────────────────────────────────
 
@@ -1597,6 +1623,103 @@ document.getElementById("exportMp4")!.addEventListener("click", async () => {
     frameWrap.style.height = prevWrapH;
     exportBtn.disabled = false;
     exportBtn.textContent = "MP4";
+    setTimeout(() => progressEl.classList.add("hidden"), 1200);
+    render();
+  }
+});
+
+// ── WebM Export ───────────────────────────────────────────────────────────
+
+if (!isMp4Supported()) {
+  (document.getElementById("exportWebm") as HTMLButtonElement).disabled = true;
+}
+
+document.getElementById("exportWebm")!.addEventListener("click", async () => {
+  if (!isMp4Supported()) return;
+  if (!state.imageSrc) {
+    alert("Sube una imagen primero.");
+    return;
+  }
+  if (state.animationPresetId === "none") {
+    alert("Elige un preset de animación primero.");
+    return;
+  }
+  stopAnimation();
+
+  const ratio = ASPECT_RATIOS[state.aspectIdx];
+  const maxDim = 1280;
+  const exportScale = Math.min(1, maxDim / Math.max(ratio.w, ratio.h));
+  const w = Math.round(ratio.w * exportScale);
+  const h = Math.round(ratio.h * exportScale);
+
+  const prevTransform = frame.style.transform;
+  const prevWrapW = frameWrap.style.width;
+  const prevWrapH = frameWrap.style.height;
+  frame.style.transform = "scale(1)";
+  frameWrap.style.width = `${ratio.w}px`;
+  frameWrap.style.height = `${ratio.h}px`;
+
+  const progressEl = document.getElementById("videoProgress")!;
+  const progressBar = document.getElementById("videoProgressBar")!;
+  const progressLabel = document.getElementById("videoProgressLabel")!;
+  const exportBtn = document.getElementById("exportWebm") as HTMLButtonElement;
+  progressEl.classList.remove("hidden");
+  exportBtn.disabled = true;
+  exportBtn.textContent = "Rendering…";
+
+  const preset = getPresetById(state.animationPresetId);
+  const bitrate = parseInt(
+    (document.getElementById("mp4Bitrate") as HTMLSelectElement).value,
+    10,
+  );
+  const fps = parseInt(
+    (document.getElementById("videoFps") as HTMLSelectElement).value,
+    10,
+  );
+
+  try {
+    const blob = await exportWebm({
+      fps,
+      duration: state.animationDuration,
+      width: w,
+      height: h,
+      bitrate,
+      target: frame,
+      setAnimationProgress: (t) => {
+        animationOverride = preset.apply(t);
+        render();
+        frame.style.transform = "scale(1)";
+        frameWrap.style.width = `${ratio.w}px`;
+        frameWrap.style.height = `${ratio.h}px`;
+      },
+      flush: () =>
+        new Promise((r) =>
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => r(undefined)),
+          ),
+        ),
+      onProgress: (i, total) => {
+        const pct = Math.round((i / total) * 100);
+        progressBar.style.width = `${pct}%`;
+        progressLabel.textContent = `${pct}% · ${i}/${total}`;
+      },
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lumen-${Date.now()}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error(err);
+    alert(`Falló la exportación WebM: ${(err as Error).message}`);
+  } finally {
+    animationOverride = null;
+    frame.style.transform = prevTransform;
+    frameWrap.style.width = prevWrapW;
+    frameWrap.style.height = prevWrapH;
+    exportBtn.disabled = false;
+    exportBtn.textContent = "WebM";
     setTimeout(() => progressEl.classList.add("hidden"), 1200);
     render();
   }

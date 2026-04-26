@@ -1,5 +1,6 @@
 import { GRADIENTS, TRANSFORM_PRESETS } from "./data";
 import type { DeviceFrameId, Transform3D } from "./data";
+import type { Keyframe } from "./animation";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,8 @@ export interface State {
   animationPresetId: string;
   animationDuration: number; // seconds
   animationLoop: boolean;
+  keyframes: Keyframe[];
+  selectedKeyframeId: string | null;
 }
 
 export const initialState: State = {
@@ -134,6 +137,8 @@ export const initialState: State = {
   animationPresetId: "none",
   animationDuration: 3,
   animationLoop: true,
+  keyframes: [],
+  selectedKeyframeId: null,
 };
 
 // ── Mutable state container ────────────────────────────────────────────────

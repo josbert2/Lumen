@@ -41,7 +41,11 @@ import { extractPalette, buildMagicGradient, buildMagicMesh, rgbToHex } from "./
 import {
   ANIMATION_PRESETS,
   getPresetById,
+  bakePresetToKeyframes,
+  interpolateKeyframes,
   type AnimationOverride,
+  type Keyframe,
+  type EasingId,
 } from "./animation";
 import { exportGif } from "./gif-export";
 import { exportMp4, isMp4Supported } from "./mp4-export";
@@ -288,6 +292,23 @@ app.innerHTML = `
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
         Animate
       </button>
+    </div>
+
+    <div id="timelinePanel" class="timeline-panel hidden">
+      <div class="timeline-header">
+        <button id="kfAdd" class="btn btn-secondary text-xs">+ Keyframe</button>
+        <select id="kfBake" class="text-xs bg-white border border-zinc-200 rounded px-2 py-1">
+          <option value="">Bake from preset…</option>
+        </select>
+        <button id="kfClear" class="btn btn-secondary text-xs">Clear</button>
+        <span class="text-zinc-400 text-xs ml-auto" id="kfInfo">0 keyframes</span>
+      </div>
+      <div class="timeline-track-wrap">
+        <div class="timeline-ruler" id="kfRuler"></div>
+        <div class="timeline-track" id="kfTrack">
+          <div class="timeline-playhead" id="kfPlayhead" style="left:0%"></div>
+        </div>
+      </div>
     </div>
   </main>
 
@@ -1341,9 +1362,20 @@ window.addEventListener("mouseup", () => {
 let animRafId: number | null = null;
 let animStartTime = 0;
 
-function tickAnimation(now: number) {
+function applyAnimationAtT(t: number): AnimationOverride {
+  if (state.animationPresetId === "custom") {
+    return interpolateKeyframes(t * state.animationDuration, state.keyframes);
+  }
   const preset = getPresetById(state.animationPresetId);
-  if (preset.id === "none") {
+  return preset.apply(t);
+}
+
+function tickAnimation(now: number) {
+  if (state.animationPresetId === "none") {
+    stopAnimation();
+    return;
+  }
+  if (state.animationPresetId === "custom" && state.keyframes.length < 2) {
     stopAnimation();
     return;
   }
@@ -1355,15 +1387,22 @@ function tickAnimation(now: number) {
       animStartTime = now;
       t = 0;
     } else {
-      animationOverride = preset.apply(1);
+      animationOverride = applyAnimationAtT(1);
+      updatePlayhead(1);
       render();
       stopAnimation();
       return;
     }
   }
-  animationOverride = preset.apply(t);
+  animationOverride = applyAnimationAtT(t);
+  updatePlayhead(t);
   render();
   animRafId = requestAnimationFrame(tickAnimation);
+}
+
+function updatePlayhead(t: number) {
+  const ph = document.getElementById("kfPlayhead");
+  if (ph) ph.style.left = `${t * 100}%`;
 }
 
 function startAnimation() {
@@ -1389,7 +1428,7 @@ document.getElementById("animPresets")!.addEventListener("click", (e) => {
   const id = btn.dataset.anim!;
   update((s) => {
     s.animationPresetId = id;
-    s.animationDuration = getPresetById(id).duration;
+    if (id !== "custom") s.animationDuration = getPresetById(id).duration;
   });
   document
     .querySelectorAll("#animPresets [data-anim]")
@@ -1399,6 +1438,8 @@ document.getElementById("animPresets")!.addEventListener("click", (e) => {
   const dur = document.getElementById("animDuration") as HTMLInputElement;
   dur.value = String(state.animationDuration);
   document.getElementById("animDurVal")!.textContent = `${state.animationDuration}s`;
+  // Show timeline panel only in custom mode
+  syncTimelinePanel();
 });
 
 const animDurInput = document.getElementById("animDuration") as HTMLInputElement;
@@ -1444,6 +1485,321 @@ window.addEventListener("keydown", (e) => {
   togglePlayPause();
 });
 
+// ── Timeline (custom keyframes) ───────────────────────────────────────────
+
+const timelinePanel = document.getElementById("timelinePanel") as HTMLDivElement;
+const kfTrack = document.getElementById("kfTrack") as HTMLDivElement;
+const kfRuler = document.getElementById("kfRuler") as HTMLDivElement;
+const kfBakeSelect = document.getElementById("kfBake") as HTMLSelectElement;
+
+// Populate "Bake from preset" dropdown (skip none + custom)
+ANIMATION_PRESETS.filter((p) => p.id !== "none" && p.id !== "custom").forEach(
+  (p) => {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.label;
+    kfBakeSelect.appendChild(opt);
+  },
+);
+
+function syncTimelinePanel() {
+  if (state.animationPresetId === "custom") {
+    timelinePanel.classList.remove("hidden");
+    renderTimeline();
+    // Stage shrinks → re-render frame to refit
+    requestAnimationFrame(() => render());
+  } else {
+    timelinePanel.classList.add("hidden");
+    requestAnimationFrame(() => render());
+  }
+}
+
+function renderTimeline() {
+  // Time ruler ticks
+  const dur = state.animationDuration;
+  const tickStep = dur >= 6 ? 1 : 0.5;
+  const ticks: string[] = [];
+  for (let t = 0; t <= dur + 0.001; t += tickStep) {
+    const pct = (t / dur) * 100;
+    ticks.push(
+      `<div class="tick" style="left:${pct}%"></div><div class="tick-label" style="left:${pct}%">${t}s</div>`,
+    );
+  }
+  kfRuler.innerHTML = ticks.join("");
+
+  // Keyframe markers
+  // Remove old markers
+  kfTrack.querySelectorAll(".kf-marker").forEach((n) => n.remove());
+  for (const kf of state.keyframes) {
+    const pct = Math.max(0, Math.min(100, (kf.time / dur) * 100));
+    const m = document.createElement("div");
+    m.className = `kf-marker ${kf.id === state.selectedKeyframeId ? "selected" : ""}`;
+    m.style.left = `${pct}%`;
+    m.dataset.kf = kf.id;
+    m.title = `t=${kf.time.toFixed(2)}s`;
+    kfTrack.appendChild(m);
+  }
+
+  document.getElementById("kfInfo")!.textContent =
+    `${state.keyframes.length} keyframe${state.keyframes.length === 1 ? "" : "s"}`;
+
+  // Render keyframe props panel inside the Animate tab
+  renderKeyframeProps();
+}
+
+// Click on track moves playhead (and seeks animation if not playing)
+let scrubbingPlayhead = false;
+kfTrack.addEventListener("mousedown", (e) => {
+  const target = e.target as HTMLElement;
+  // Drag a keyframe?
+  const marker = target.closest(".kf-marker") as HTMLElement | null;
+  if (marker) {
+    e.preventDefault();
+    e.stopPropagation();
+    const kfId = marker.dataset.kf!;
+    update((s) => {
+      s.selectedKeyframeId = kfId;
+    });
+    startKfDrag(kfId);
+    return;
+  }
+  // Otherwise scrub the playhead
+  scrubbingPlayhead = true;
+  scrubAt(e.clientX);
+});
+
+function scrubAt(clientX: number) {
+  const rect = kfTrack.getBoundingClientRect();
+  const t = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  updatePlayhead(t);
+  if (state.animationPresetId === "custom" && state.keyframes.length > 0) {
+    animationOverride = interpolateKeyframes(
+      t * state.animationDuration,
+      state.keyframes,
+    );
+    render();
+  }
+}
+
+window.addEventListener("mousemove", (e) => {
+  if (scrubbingPlayhead) scrubAt(e.clientX);
+});
+window.addEventListener("mouseup", () => {
+  scrubbingPlayhead = false;
+});
+
+let kfDrag: { id: string } | null = null;
+function startKfDrag(id: string) {
+  kfDrag = { id };
+}
+window.addEventListener("mousemove", (e) => {
+  if (!kfDrag) return;
+  const rect = kfTrack.getBoundingClientRect();
+  const t = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const newTime = t * state.animationDuration;
+  update(
+    (s) => {
+      const k = s.keyframes.find((x) => x.id === kfDrag!.id);
+      if (k) k.time = newTime;
+    },
+    false,
+  );
+});
+window.addEventListener("mouseup", () => {
+  if (kfDrag) {
+    commitTransaction();
+    kfDrag = null;
+  }
+});
+kfTrack.addEventListener("mousedown", (e) => {
+  // Begin transaction on any track interaction (so a pure click doesn't push history needlessly)
+  if ((e.target as HTMLElement).closest(".kf-marker")) {
+    beginTransaction();
+  }
+});
+
+// Add keyframe at current playhead
+document.getElementById("kfAdd")!.addEventListener("click", () => {
+  const ph = document.getElementById("kfPlayhead") as HTMLElement;
+  const pct = parseFloat(ph.style.left || "0");
+  const time = (pct / 100) * state.animationDuration;
+  const id = `kf-${Math.random().toString(36).slice(2, 8)}`;
+  update((s) => {
+    s.keyframes.push({
+      id,
+      time,
+      zoom: animationOverride?.zoom ?? state.zoom,
+      rotate: animationOverride?.rotate ?? state.rotate,
+      transform3d: animationOverride?.transform3d ?? state.transform3d,
+      easing: "easeInOut",
+    });
+    s.selectedKeyframeId = id;
+    s.animationPresetId = "custom";
+  });
+  syncTimelinePanel();
+});
+
+// Bake from preset
+kfBakeSelect.addEventListener("change", () => {
+  const id = kfBakeSelect.value;
+  if (!id) return;
+  const preset = getPresetById(id);
+  const baked = bakePresetToKeyframes(preset, 9);
+  update((s) => {
+    s.keyframes = baked;
+    s.animationPresetId = "custom";
+    s.animationDuration = preset.duration;
+    s.selectedKeyframeId = null;
+  });
+  // Sync UI
+  document
+    .querySelectorAll("#animPresets [data-anim]")
+    .forEach((b) => b.classList.remove("active"));
+  document
+    .querySelector('[data-anim="custom"]')
+    ?.classList.add("active");
+  const dur = document.getElementById("animDuration") as HTMLInputElement;
+  dur.value = String(state.animationDuration);
+  document.getElementById("animDurVal")!.textContent = `${state.animationDuration}s`;
+  kfBakeSelect.value = "";
+  syncTimelinePanel();
+});
+
+document.getElementById("kfClear")!.addEventListener("click", () => {
+  if (state.keyframes.length === 0) return;
+  if (!confirm("Borrar todos los keyframes?")) return;
+  update((s) => {
+    s.keyframes = [];
+    s.selectedKeyframeId = null;
+  });
+  syncTimelinePanel();
+});
+
+// Delete key removes selected keyframe (when not in input)
+window.addEventListener("keydown", (e) => {
+  if ((e.target as HTMLElement).matches("input, textarea, select")) return;
+  if ((e.key === "Delete" || e.key === "Backspace") && state.selectedKeyframeId) {
+    update((s) => {
+      s.keyframes = s.keyframes.filter((k) => k.id !== s.selectedKeyframeId);
+      s.selectedKeyframeId = null;
+    });
+    syncTimelinePanel();
+    e.preventDefault();
+  }
+});
+
+// Properties panel for selected keyframe — appended inside Animate tab
+function renderKeyframeProps() {
+  // Show only when custom mode + something selected
+  let host = document.getElementById("kfProps");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "kfProps";
+    document.querySelector('[data-panel="animate"]')!.appendChild(host);
+  }
+  const kf = state.keyframes.find((k) => k.id === state.selectedKeyframeId);
+  if (!kf || state.animationPresetId !== "custom") {
+    host.innerHTML = "";
+    return;
+  }
+  host.innerHTML = `
+    <div class="props-panel mt-3">
+      <div class="text-xs font-medium text-zinc-700 mb-2">Selected keyframe</div>
+      <label>Time (s)</label>
+      <input id="kfPropTime" type="number" step="0.05" min="0" max="${state.animationDuration}" value="${kf.time.toFixed(2)}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+      <div class="row-2">
+        <div>
+          <label>Zoom</label>
+          <input id="kfPropZoom" type="number" step="0.05" min="0.2" max="3" value="${kf.zoom ?? 1}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+        </div>
+        <div>
+          <label>Rot Z</label>
+          <input id="kfPropRotate" type="number" step="1" min="-180" max="180" value="${kf.rotate ?? 0}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+        </div>
+      </div>
+      <div class="row-2 mt-1">
+        <div>
+          <label>Rot X</label>
+          <input id="kfPropRx" type="number" step="1" value="${kf.transform3d?.rx ?? 0}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+        </div>
+        <div>
+          <label>Rot Y</label>
+          <input id="kfPropRy" type="number" step="1" value="${kf.transform3d?.ry ?? 0}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+        </div>
+      </div>
+      <label>Easing → next</label>
+      <select id="kfPropEase" class="w-full text-sm border border-zinc-200 rounded px-2 py-1">
+        ${(["linear", "easeIn", "easeOut", "easeInOut", "easeInOutCubic"] as EasingId[])
+          .map(
+            (e) =>
+              `<option value="${e}" ${e === (kf.easing ?? "easeInOut") ? "selected" : ""}>${e}</option>`,
+          )
+          .join("")}
+      </select>
+      <button id="kfPropDelete" class="btn btn-secondary w-full justify-center mt-3 text-xs">Delete keyframe</button>
+    </div>`;
+
+  bindKeyframeProps(kf.id);
+}
+
+function bindKeyframeProps(kfId: string) {
+  const setProp = (mut: (k: Keyframe) => void) => {
+    update((s) => {
+      const k = s.keyframes.find((x) => x.id === kfId);
+      if (k) mut(k);
+    });
+    syncTimelinePanel();
+  };
+  document.getElementById("kfPropTime")!.addEventListener("change", (e) => {
+    setProp((k) => {
+      k.time = Math.max(
+        0,
+        Math.min(state.animationDuration, parseFloat((e.target as HTMLInputElement).value)),
+      );
+    });
+  });
+  document.getElementById("kfPropZoom")!.addEventListener("change", (e) => {
+    setProp((k) => {
+      k.zoom = parseFloat((e.target as HTMLInputElement).value);
+    });
+  });
+  document.getElementById("kfPropRotate")!.addEventListener("change", (e) => {
+    setProp((k) => {
+      k.rotate = parseFloat((e.target as HTMLInputElement).value);
+    });
+  });
+  const updateT3d = (axis: "rx" | "ry") => (e: Event) => {
+    setProp((k) => {
+      k.transform3d = {
+        id: "kf",
+        label: "",
+        rx: k.transform3d?.rx ?? 0,
+        ry: k.transform3d?.ry ?? 0,
+        rz: k.transform3d?.rz ?? 0,
+        perspective: k.transform3d?.perspective ?? 1500,
+        [axis]: parseFloat((e.target as HTMLInputElement).value),
+      };
+    });
+  };
+  document.getElementById("kfPropRx")!.addEventListener("change", updateT3d("rx"));
+  document.getElementById("kfPropRy")!.addEventListener("change", updateT3d("ry"));
+  document.getElementById("kfPropEase")!.addEventListener("change", (e) => {
+    setProp((k) => {
+      k.easing = (e.target as HTMLSelectElement).value as EasingId;
+    });
+  });
+  document.getElementById("kfPropDelete")!.addEventListener("click", () => {
+    update((s) => {
+      s.keyframes = s.keyframes.filter((k) => k.id !== kfId);
+      s.selectedKeyframeId = null;
+    });
+    syncTimelinePanel();
+  });
+}
+
+// Initial sync (state from IndexedDB might restore custom mode)
+syncTimelinePanel();
+
 // ── GIF Export ────────────────────────────────────────────────────────────
 
 document.getElementById("exportGif")!.addEventListener("click", async () => {
@@ -1482,8 +1838,6 @@ document.getElementById("exportGif")!.addEventListener("click", async () => {
   exportBtn.disabled = true;
   exportBtn.textContent = "Rendering…";
 
-  const preset = getPresetById(state.animationPresetId);
-
   try {
     const blob = await exportGif({
       fps: 20,
@@ -1492,7 +1846,7 @@ document.getElementById("exportGif")!.addEventListener("click", async () => {
       height: h,
       target: frame,
       setAnimationProgress: (t) => {
-        animationOverride = preset.apply(t);
+        animationOverride = applyAnimationAtT(t);
         render();
         // Re-pin export sizes since render() may reset them
         frame.style.transform = "scale(1)";
@@ -1570,7 +1924,6 @@ document.getElementById("exportMp4")!.addEventListener("click", async () => {
   exportBtn.disabled = true;
   exportBtn.textContent = "Rendering…";
 
-  const preset = getPresetById(state.animationPresetId);
   const bitrate = parseInt(
     (document.getElementById("mp4Bitrate") as HTMLSelectElement).value,
     10,
@@ -1589,7 +1942,7 @@ document.getElementById("exportMp4")!.addEventListener("click", async () => {
       bitrate,
       target: frame,
       setAnimationProgress: (t) => {
-        animationOverride = preset.apply(t);
+        animationOverride = applyAnimationAtT(t);
         render();
         frame.style.transform = "scale(1)";
         frameWrap.style.width = `${ratio.w}px`;
@@ -1667,7 +2020,6 @@ document.getElementById("exportWebm")!.addEventListener("click", async () => {
   exportBtn.disabled = true;
   exportBtn.textContent = "Rendering…";
 
-  const preset = getPresetById(state.animationPresetId);
   const bitrate = parseInt(
     (document.getElementById("mp4Bitrate") as HTMLSelectElement).value,
     10,
@@ -1686,7 +2038,7 @@ document.getElementById("exportWebm")!.addEventListener("click", async () => {
       bitrate,
       target: frame,
       setAnimationProgress: (t) => {
-        animationOverride = preset.apply(t);
+        animationOverride = applyAnimationAtT(t);
         render();
         frame.style.transform = "scale(1)";
         frameWrap.style.width = `${ratio.w}px`;
@@ -1781,12 +2133,20 @@ document.getElementById("export")!.addEventListener("click", async () => {
 
 const autoSave = makeAutoSave(() => state, 1500);
 let lastImageSrc: string | null = null;
+let lastPresetId: string | null = null;
 subscribe(() => {
   render();
   autoSave();
   if (state.imageSrc !== lastImageSrc) {
     lastImageSrc = state.imageSrc;
     refreshMagicPalette();
+  }
+  // Re-render timeline if its data changed; toggle panel if mode flipped
+  if (state.animationPresetId !== lastPresetId) {
+    lastPresetId = state.animationPresetId;
+    syncTimelinePanel();
+  } else if (state.animationPresetId === "custom") {
+    renderTimeline();
   }
 });
 

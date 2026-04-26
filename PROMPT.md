@@ -89,7 +89,17 @@ All in the browser. Nothing leaves the user's machine.
 - [x] **WebM export** (VP9 via webm-muxer) — better Firefox support
 - [x] **Stage "Animate" button** — pill at center-bottom of stage like shots.so
 - [x] **Space key shortcut** — toggle play/pause (when not focused in inputs)
-- [ ] Custom keyframe editor (vs. baked presets)
+- [x] **Custom keyframe editor**
+  - Timeline panel below stage (only visible in Custom mode)
+  - Time ruler with auto-spaced ticks
+  - Diamond keyframe markers, click-to-select, drag-to-reposition
+  - Scrubbable playhead — click track to seek
+  - "+ Keyframe" snapshots current zoom/rotate/transform3d at playhead
+  - "Bake from preset…" — populates 9 evenly-sampled keyframes from any baked preset
+  - Per-keyframe properties: time, zoom, Z rotation, 3D rx/ry, easing-to-next
+  - 5 easing curves per segment (linear, easeIn, easeOut, easeInOut, easeInOutCubic)
+  - Delete via button or `Delete` key
+  - All exports (GIF/MP4/WebM) work with custom keyframes via shared `applyAnimationAtT(t)` path
 - [ ] Tweet / code snippet import
 - [ ] Unsplash integration for backgrounds
 - [ ] Migrate to React + Zustand + Konva (only if codebase becomes unwieldy)

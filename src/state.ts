@@ -109,6 +109,9 @@ export interface State {
   exportScale: 1 | 2 | 3;
   tool: Tool;
   bgNoise: number; // 0..1
+  animationPresetId: string;
+  animationDuration: number; // seconds
+  animationLoop: boolean;
 }
 
 export const initialState: State = {
@@ -128,6 +131,9 @@ export const initialState: State = {
   exportScale: 1,
   tool: "select",
   bgNoise: 0,
+  animationPresetId: "none",
+  animationDuration: 3,
+  animationLoop: true,
 };
 
 // ── Mutable state container ────────────────────────────────────────────────

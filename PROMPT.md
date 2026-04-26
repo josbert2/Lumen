@@ -61,18 +61,31 @@ All in the browser. Nothing leaves the user's machine.
 - [x] Export presets: 1x / 2x / 3x
 - [ ] Annotations: arrows, shapes, blur regions (deferred to Phase 3)
 
-### 🔄 Phase 3 — Differentiators & advanced (in progress)
+### ✅ Phase 3 — Differentiators (done)
 
 - [x] **"Magic" background**: extract dominant colors from uploaded image (Gradient + Mesh modes)
 - [x] **Annotations**: arrow + rectangle, drawable on canvas
 - [x] **Blur regions**: backdrop-filter rectangles for hiding sensitive info
 - [x] **Freehand pen**: SVG polyline drawing tool
 - [x] **Background noise / grain**: SVG turbulence overlay with mix-blend-mode
+
+### ✅ Phase 4 — Animation + Video (done, vanilla)
+
+- [x] Animation engine with 8 presets (Spin Y, Tilt Loop, Zoom In, Pulse, Bounce, Iso Orbit, Drift In, None)
+- [x] 5 easing functions (linear, easeIn, easeOut, easeInOut, easeInOutCubic)
+- [x] Live preview with `requestAnimationFrame` + render-time overrides (no state pollution)
+- [x] Play / pause / stop / loop controls
+- [x] **GIF export** at 20fps via `gifenc` (no FFmpeg WASM needed)
+- [x] Progress bar during render
+- [x] Auto-cap dimensions to 720px max for reasonable file size
+
+### 📋 Phase 5 — Polish & extras (deferred)
+
+- [ ] Custom keyframe editor (vs. baked presets)
+- [ ] MP4 / WebM export via WebCodecs (and/or FFmpeg WASM)
 - [ ] Tweet / code snippet import
 - [ ] Unsplash integration for backgrounds
-- [ ] Migrate to **React + Zustand + Konva** (multi-layer canvas) — needed for:
-  - Animation timeline (keyframes, easing, playhead)
-  - Video export: MP4 (WebCodecs / FFmpeg WASM), WebM, GIF
+- [ ] Migrate to React + Zustand + Konva (only if codebase becomes unwieldy)
 
 ---
 

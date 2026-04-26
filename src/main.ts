@@ -38,6 +38,12 @@ import { renderDevice } from "./devices";
 import { renderOverlays, attachOverlayDragHandlers } from "./overlays";
 import { loadDraft, clearDraft, makeAutoSave } from "./storage";
 import { extractPalette, buildMagicGradient, buildMagicMesh, rgbToHex } from "./magic";
+import {
+  ANIMATION_PRESETS,
+  getPresetById,
+  type AnimationOverride,
+} from "./animation";
+import { exportGif } from "./gif-export";
 
 // ── Helper: build swatch grid ──────────────────────────────────────────────
 
@@ -65,10 +71,11 @@ app.innerHTML = `
 <div class="flex h-full w-full">
   <aside class="w-72 shrink-0 border-r border-line bg-white scroll-y">
     <div class="p-4 border-b border-line">
-      <div class="flex gap-1 p-1 bg-zinc-100 rounded-lg" id="tabs">
+      <div class="flex gap-1 p-1 bg-zinc-100 rounded-lg text-xs" id="tabs">
         <button class="tab active" data-tab="mockup">Mockup</button>
         <button class="tab" data-tab="frame">Frame</button>
         <button class="tab" data-tab="overlay">Overlay</button>
+        <button class="tab" data-tab="animate">Animate</button>
       </div>
       <div class="section-title">Aspect Ratio</div>
       <select id="aspect" class="w-full text-sm border border-line rounded-lg px-3 py-2 bg-white">
@@ -180,6 +187,43 @@ app.innerHTML = `
 
       <div id="overlayProps"></div>
     </div>
+
+    <div class="tab-panel p-4" data-panel="animate">
+      <div class="section-title">Preset</div>
+      <div class="grid grid-cols-2 gap-2" id="animPresets">
+        ${ANIMATION_PRESETS.map(
+          (p) =>
+            `<button class="device-btn ${p.id === state.animationPresetId ? "active" : ""}" data-anim="${p.id}">${p.label}</button>`,
+        ).join("")}
+      </div>
+
+      <div class="section-title">Timing</div>
+      <label class="text-xs text-zinc-500 flex items-center justify-between">
+        <span>Duration</span><span id="animDurVal">${state.animationDuration}s</span>
+      </label>
+      <input id="animDuration" type="range" min="1" max="10" step="0.5" value="${state.animationDuration}" />
+
+      <label class="flex items-center gap-2 text-sm cursor-pointer mt-3">
+        <input id="animLoop" type="checkbox" class="w-4 h-4" ${state.animationLoop ? "checked" : ""} />
+        Loop preview
+      </label>
+
+      <div class="section-title">Playback</div>
+      <div class="grid grid-cols-2 gap-2">
+        <button id="animPlay" class="btn justify-center">▶ Play</button>
+        <button id="animStop" class="btn btn-secondary justify-center">■ Stop</button>
+      </div>
+
+      <div class="section-title">Export</div>
+      <button id="exportGif" class="btn w-full justify-center">↑ Export GIF</button>
+      <div class="text-xs text-zinc-500 mt-2">Renders ${state.animationDuration}s at 20 fps. Larger sizes take longer.</div>
+      <div id="gifProgress" class="mt-3 hidden">
+        <div class="h-2 bg-zinc-100 rounded overflow-hidden">
+          <div id="gifProgressBar" class="h-full bg-zinc-900 transition-all" style="width:0%"></div>
+        </div>
+        <div id="gifProgressLabel" class="text-xs text-zinc-500 mt-1">0%</div>
+      </div>
+    </div>
   </aside>
 
   <main class="flex-1 flex flex-col">
@@ -248,6 +292,9 @@ const aspectSelect = document.getElementById("aspect") as HTMLSelectElement;
 // Track preview scale for drag math
 let currentStageScale = 1;
 
+// Live animation override applied at render time (does not pollute state/history)
+let animationOverride: AnimationOverride | null = null;
+
 // ── Render ─────────────────────────────────────────────────────────────────
 
 function render() {
@@ -283,10 +330,13 @@ function render() {
         })`
       : "none";
 
-  const t = state.transform3d;
+  // Apply live animation overrides on top of base state values
+  const t = animationOverride?.transform3d ?? state.transform3d;
+  const liveZoom = animationOverride?.zoom ?? state.zoom;
+  const liveRotate = animationOverride?.rotate ?? state.rotate;
   const innerTransform = `rotateX(${t.rx}deg) rotateY(${t.ry}deg) rotateZ(${
-    t.rz + state.rotate
-  }deg) scale(${state.zoom})`;
+    t.rz + liveRotate
+  }deg) scale(${liveZoom})`;
 
   const innerStyle = `
     border-radius:${state.radius}px;
@@ -1254,7 +1304,179 @@ window.addEventListener("mouseup", () => {
   drawing = null;
 });
 
-// ── Export ─────────────────────────────────────────────────────────────────
+// ── Animation playback ────────────────────────────────────────────────────
+
+let animRafId: number | null = null;
+let animStartTime = 0;
+
+function tickAnimation(now: number) {
+  const preset = getPresetById(state.animationPresetId);
+  if (preset.id === "none") {
+    stopAnimation();
+    return;
+  }
+  const duration = state.animationDuration * 1000;
+  const elapsed = now - animStartTime;
+  let t = elapsed / duration;
+  if (t >= 1) {
+    if (state.animationLoop) {
+      animStartTime = now;
+      t = 0;
+    } else {
+      animationOverride = preset.apply(1);
+      render();
+      stopAnimation();
+      return;
+    }
+  }
+  animationOverride = preset.apply(t);
+  render();
+  animRafId = requestAnimationFrame(tickAnimation);
+}
+
+function startAnimation() {
+  if (animRafId !== null) return;
+  if (state.animationPresetId === "none") return;
+  animStartTime = performance.now();
+  animRafId = requestAnimationFrame(tickAnimation);
+  (document.getElementById("animPlay") as HTMLButtonElement).textContent = "❚❚ Pause";
+}
+function stopAnimation() {
+  if (animRafId !== null) cancelAnimationFrame(animRafId);
+  animRafId = null;
+  animationOverride = null;
+  (document.getElementById("animPlay") as HTMLButtonElement).textContent = "▶ Play";
+  render();
+}
+
+document.getElementById("animPresets")!.addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest("[data-anim]") as HTMLElement | null;
+  if (!btn) return;
+  const id = btn.dataset.anim!;
+  update((s) => {
+    s.animationPresetId = id;
+    s.animationDuration = getPresetById(id).duration;
+  });
+  document
+    .querySelectorAll("#animPresets [data-anim]")
+    .forEach((b) => b.classList.remove("active"));
+  btn.classList.add("active");
+  // Sync duration slider
+  const dur = document.getElementById("animDuration") as HTMLInputElement;
+  dur.value = String(state.animationDuration);
+  document.getElementById("animDurVal")!.textContent = `${state.animationDuration}s`;
+});
+
+const animDurInput = document.getElementById("animDuration") as HTMLInputElement;
+animDurInput.addEventListener("input", () => {
+  update((s) => {
+    s.animationDuration = parseFloat(animDurInput.value);
+  }, false);
+  document.getElementById("animDurVal")!.textContent = `${animDurInput.value}s`;
+});
+animDurInput.addEventListener("change", () => commitTransaction());
+animDurInput.addEventListener("mousedown", () => beginTransaction());
+
+document.getElementById("animLoop")!.addEventListener("change", (e) => {
+  update((s) => {
+    s.animationLoop = (e.target as HTMLInputElement).checked;
+  });
+});
+
+document.getElementById("animPlay")!.addEventListener("click", () => {
+  if (animRafId !== null) {
+    stopAnimation();
+  } else {
+    startAnimation();
+  }
+});
+document.getElementById("animStop")!.addEventListener("click", () => stopAnimation());
+
+// ── GIF Export ────────────────────────────────────────────────────────────
+
+document.getElementById("exportGif")!.addEventListener("click", async () => {
+  if (!state.imageSrc) {
+    alert("Sube una imagen primero.");
+    return;
+  }
+  if (state.animationPresetId === "none") {
+    alert("Elige un preset de animación primero.");
+    return;
+  }
+  // Stop preview if playing
+  stopAnimation();
+
+  const ratio = ASPECT_RATIOS[state.aspectIdx];
+  // Cap the GIF size to keep it fast & small
+  const maxDim = 720;
+  const exportScale = Math.min(1, maxDim / Math.max(ratio.w, ratio.h));
+  const w = Math.round(ratio.w * exportScale);
+  const h = Math.round(ratio.h * exportScale);
+
+  const prevTransform = frame.style.transform;
+  const prevWrapW = frameWrap.style.width;
+  const prevWrapH = frameWrap.style.height;
+
+  // Render at full size then downscale via toCanvas width/height
+  frame.style.transform = "scale(1)";
+  frameWrap.style.width = `${ratio.w}px`;
+  frameWrap.style.height = `${ratio.h}px`;
+
+  const progressEl = document.getElementById("gifProgress")!;
+  const progressBar = document.getElementById("gifProgressBar")!;
+  const progressLabel = document.getElementById("gifProgressLabel")!;
+  const exportBtn = document.getElementById("exportGif") as HTMLButtonElement;
+  progressEl.classList.remove("hidden");
+  exportBtn.disabled = true;
+  exportBtn.textContent = "Rendering…";
+
+  const preset = getPresetById(state.animationPresetId);
+
+  try {
+    const blob = await exportGif({
+      fps: 20,
+      duration: state.animationDuration,
+      width: w,
+      height: h,
+      target: frame,
+      setAnimationProgress: (t) => {
+        animationOverride = preset.apply(t);
+        render();
+        // Re-pin export sizes since render() may reset them
+        frame.style.transform = "scale(1)";
+        frameWrap.style.width = `${ratio.w}px`;
+        frameWrap.style.height = `${ratio.h}px`;
+      },
+      flush: () =>
+        new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(undefined)))),
+      onProgress: (i, total) => {
+        const pct = Math.round((i / total) * 100);
+        progressBar.style.width = `${pct}%`;
+        progressLabel.textContent = `${pct}% · ${i}/${total}`;
+      },
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lumen-${Date.now()}.gif`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    console.error(err);
+    alert("Falló la exportación GIF. Revisa la consola.");
+  } finally {
+    animationOverride = null;
+    frame.style.transform = prevTransform;
+    frameWrap.style.width = prevWrapW;
+    frameWrap.style.height = prevWrapH;
+    exportBtn.disabled = false;
+    exportBtn.textContent = "↑ Export GIF";
+    setTimeout(() => progressEl.classList.add("hidden"), 1200);
+    render();
+  }
+});
+
+// ── Export PNG ────────────────────────────────────────────────────────────
 
 const exportScaleSelect = document.getElementById(
   "exportScale",

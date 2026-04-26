@@ -30,6 +30,8 @@ import type {
   ImageOverlay,
   ArrowOverlay,
   RectOverlay,
+  BlurOverlay,
+  PenOverlay,
   Tool,
 } from "./state";
 import { renderDevice } from "./devices";
@@ -94,6 +96,12 @@ app.innerHTML = `
       </div>
       <div id="magicPalette" class="flex gap-1 mt-2 h-5 hidden"></div>
 
+      <div class="section-title">Effects</div>
+      <label class="text-xs text-zinc-500 flex items-center justify-between">
+        <span>Noise / grain</span><span id="bgNoiseVal">0%</span>
+      </label>
+      <input id="bgNoise" type="range" min="0" max="100" value="0" />
+
       <div class="text-xs font-medium text-zinc-700 mb-2">Solid</div>
       ${swatchGrid("solidSwatches", SOLID_COLORS, "solid")}
 
@@ -156,6 +164,8 @@ app.innerHTML = `
         <button class="device-btn active" data-tool="select">Select</button>
         <button class="device-btn" data-tool="arrow">↗ Arrow</button>
         <button class="device-btn" data-tool="rect">▭ Box</button>
+        <button class="device-btn" data-tool="pen">✎ Pen</button>
+        <button class="device-btn" data-tool="blur">◯ Blur</button>
       </div>
       <div class="text-xs text-zinc-500 mt-2">Pick a tool, then drag on the canvas to draw.</div>
 
@@ -286,6 +296,9 @@ function render() {
   `;
 
   let body = "";
+  if (state.bgNoise > 0) {
+    body += `<div class="frame-noise" style="opacity:${state.bgNoise}"></div>`;
+  }
   if (state.imageSrc) {
     body += renderDevice(state.device, state.imageSrc, innerStyle);
   } else {
@@ -382,6 +395,8 @@ function renderLayersList() {
       else if (o.type === "image") label = "🖼 Image";
       else if (o.type === "arrow") label = "↗ Arrow";
       else if (o.type === "rect") label = "▭ Box";
+      else if (o.type === "blur") label = "◯ Blur";
+      else if (o.type === "pen") label = "✎ Pen";
       const active = o.id === state.selectedOverlayId ? "bg-zinc-100" : "";
       return `
         <div class="flex items-center gap-2 px-2 py-1.5 rounded ${active} hover:bg-zinc-50 cursor-pointer" data-layer-id="${o.id}">
@@ -500,7 +515,67 @@ function renderOverlayProps() {
         </div>
       </div>`;
     bindRectProps(overlay);
+  } else if (overlay.type === "blur") {
+    container.innerHTML = `
+      <div class="props-panel">
+        <label>Blur amount</label>
+        <input id="propAmount" type="range" min="2" max="60" value="${overlay.amount}" />
+        <label>Corner radius</label>
+        <input id="propRadius" type="number" min="0" max="80" value="${overlay.radius}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+      </div>`;
+    bindBlurProps(overlay);
+  } else if (overlay.type === "pen") {
+    container.innerHTML = `
+      <div class="props-panel">
+        <div class="row-2">
+          <div>
+            <label>Color</label>
+            <input id="propColor" type="color" class="color-input" value="${overlay.color}" />
+          </div>
+          <div>
+            <label>Stroke W</label>
+            <input id="propStroke" type="number" step="0.1" min="0.2" max="3" value="${overlay.strokeWidth}" class="w-full text-sm border border-zinc-200 rounded px-2 py-1" />
+          </div>
+        </div>
+      </div>`;
+    bindPenProps(overlay);
   }
+}
+
+function bindBlurProps(o: BlurOverlay) {
+  const amount = document.getElementById("propAmount") as HTMLInputElement;
+  amount.addEventListener("mousedown", () => beginTransaction());
+  amount.addEventListener("input", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as BlurOverlay;
+      cur.amount = parseInt(amount.value, 10);
+    }, false);
+  });
+  amount.addEventListener("change", () => commitTransaction());
+  const radius = document.getElementById("propRadius") as HTMLInputElement;
+  radius.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as BlurOverlay;
+      cur.radius = parseInt(radius.value, 10);
+    });
+  });
+}
+
+function bindPenProps(o: PenOverlay) {
+  const color = document.getElementById("propColor") as HTMLInputElement;
+  color.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as PenOverlay;
+      cur.color = color.value;
+    });
+  });
+  const stroke = document.getElementById("propStroke") as HTMLInputElement;
+  stroke.addEventListener("change", () => {
+    update((s) => {
+      const cur = s.overlays.find((x) => x.id === o.id) as PenOverlay;
+      cur.strokeWidth = parseFloat(stroke.value);
+    });
+  });
 }
 
 function bindArrowProps(o: ArrowOverlay) {
@@ -710,6 +785,20 @@ bindRange("padding", "padding");
 bindRange("radius", "radius");
 bindRange("shadow", "shadow", "");
 bindRange("rotate", "rotate", "°");
+
+const bgNoiseInput = document.getElementById("bgNoise") as HTMLInputElement;
+const bgNoiseVal = document.getElementById("bgNoiseVal")!;
+bgNoiseInput.addEventListener("mousedown", () => beginTransaction());
+bgNoiseInput.addEventListener("input", () => {
+  update(
+    (s) => {
+      s.bgNoise = parseInt(bgNoiseInput.value, 10) / 100;
+    },
+    false,
+  );
+  bgNoiseVal.textContent = `${bgNoiseInput.value}%`;
+});
+bgNoiseInput.addEventListener("change", () => commitTransaction());
 
 const zoomInput = document.getElementById("zoom") as HTMLInputElement;
 const zoomVal = document.getElementById("zoomVal")!;
@@ -932,7 +1021,13 @@ attachOverlayDragHandlers(
       update(
         (s) => {
           const o = s.overlays.find((o) => o.id === id);
-          if (o && (o.type === "text" || o.type === "image" || o.type === "rect")) {
+          if (
+            o &&
+            (o.type === "text" ||
+              o.type === "image" ||
+              o.type === "rect" ||
+              o.type === "blur")
+          ) {
             o.x = x;
             o.y = y;
           }
@@ -1073,6 +1168,27 @@ frame.addEventListener("mousedown", (e) => {
         radius: 1,
       };
       s.overlays.push(rect);
+    } else if (drawing!.tool === "blur") {
+      const blur: BlurOverlay = {
+        id,
+        type: "blur",
+        x: c.x,
+        y: c.y,
+        width: 0,
+        height: 0,
+        amount: 16,
+        radius: 8,
+      };
+      s.overlays.push(blur);
+    } else if (drawing!.tool === "pen") {
+      const pen: PenOverlay = {
+        id,
+        type: "pen",
+        points: [c.x, c.y],
+        color: "#ef4444",
+        strokeWidth: 0.6,
+      };
+      s.overlays.push(pen);
     }
     s.selectedOverlayId = id;
   }, false);
@@ -1088,13 +1204,25 @@ window.addEventListener("mousemove", (e) => {
     if (o.type === "arrow") {
       o.x2 = Math.max(0, Math.min(100, c.x));
       o.y2 = Math.max(0, Math.min(100, c.y));
-    } else if (o.type === "rect") {
+    } else if (o.type === "rect" || o.type === "blur") {
       const minX = Math.min(drawing!.startXPct, c.x);
       const minY = Math.min(drawing!.startYPct, c.y);
       o.x = Math.max(0, minX);
       o.y = Math.max(0, minY);
       o.width = Math.min(100 - o.x, Math.abs(c.x - drawing!.startXPct));
       o.height = Math.min(100 - o.y, Math.abs(c.y - drawing!.startYPct));
+    } else if (o.type === "pen") {
+      // Skip if last point is too close (avoids spamming the array)
+      const last = o.points.length;
+      if (last >= 2) {
+        const dx = c.x - o.points[last - 2];
+        const dy = c.y - o.points[last - 1];
+        if (Math.hypot(dx, dy) < 0.4) return;
+      }
+      o.points.push(
+        Math.max(0, Math.min(100, c.x)),
+        Math.max(0, Math.min(100, c.y)),
+      );
     }
   }, false);
 });
@@ -1102,24 +1230,24 @@ window.addEventListener("mousemove", (e) => {
 window.addEventListener("mouseup", () => {
   if (!drawing) return;
   const created = state.overlays.find((o) => o.id === drawing!.newId);
-  // If user just clicked without dragging, the shape is degenerate — remove it
   if (created) {
+    let degenerate = false;
     if (created.type === "arrow") {
       const dx = created.x2 - created.x1;
       const dy = created.y2 - created.y1;
-      if (Math.hypot(dx, dy) < 1) {
-        update((s) => {
-          s.overlays = s.overlays.filter((o) => o.id !== drawing!.newId);
-        }, false);
-      }
-    } else if (created.type === "rect" && created.width < 1 && created.height < 1) {
+      degenerate = Math.hypot(dx, dy) < 1;
+    } else if (created.type === "rect" || created.type === "blur") {
+      degenerate = created.width < 1 && created.height < 1;
+    } else if (created.type === "pen") {
+      degenerate = created.points.length < 4;
+    }
+    if (degenerate) {
       update((s) => {
         s.overlays = s.overlays.filter((o) => o.id !== drawing!.newId);
       }, false);
     }
   }
   commitTransaction();
-  // After drawing, switch back to Select tool for convenience
   update((s) => {
     s.tool = "select";
   }, false);

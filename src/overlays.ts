@@ -3,27 +3,45 @@ import type {
   ImageOverlay,
   ArrowOverlay,
   RectOverlay,
+  BlurOverlay,
+  PenOverlay,
   State,
 } from "./state";
 
 // Render all overlays on top of the device. Returns HTML string.
 export function renderOverlays(state: State): string {
   let body = "";
-  // Annotations (arrows + rects) live inside one shared SVG layer so they stack
-  // correctly without each one needing its own SVG with a fixed bounding box.
+  // Annotations (arrows, rects, pens) live inside one shared SVG layer.
   const annotations = state.overlays.filter(
-    (o) => o.type === "arrow" || o.type === "rect",
-  ) as (ArrowOverlay | RectOverlay)[];
+    (o) => o.type === "arrow" || o.type === "rect" || o.type === "pen",
+  ) as (ArrowOverlay | RectOverlay | PenOverlay)[];
   if (annotations.length > 0) {
     body += renderAnnotationLayer(annotations, state.selectedOverlayId);
   }
-  // Text and image overlays each get their own div
+  // Text, image, blur overlays each get their own div
   for (const o of state.overlays) {
     const selected = o.id === state.selectedOverlayId;
     if (o.type === "text") body += renderTextOverlay(o, selected);
     else if (o.type === "image") body += renderImageOverlay(o, selected);
+    else if (o.type === "blur") body += renderBlurOverlay(o, selected);
   }
   return body;
+}
+
+function renderBlurOverlay(o: BlurOverlay, selected: boolean): string {
+  return `
+    <div
+      class="overlay overlay-blur ${selected ? "selected" : ""}"
+      data-overlay-id="${o.id}"
+      style="
+        left:${o.x}%; top:${o.y}%;
+        width:${o.width}%; height:${o.height}%;
+        backdrop-filter: blur(${o.amount}px);
+        -webkit-backdrop-filter: blur(${o.amount}px);
+        border-radius:${o.radius}px;
+        transform:translate(0,0);
+      "
+    ></div>`;
 }
 
 function renderTextOverlay(o: TextOverlay, selected: boolean): string {
@@ -60,11 +78,9 @@ function renderImageOverlay(o: ImageOverlay, selected: boolean): string {
 }
 
 function renderAnnotationLayer(
-  shapes: (ArrowOverlay | RectOverlay)[],
+  shapes: (ArrowOverlay | RectOverlay | PenOverlay)[],
   selectedId: string | null,
 ): string {
-  // SVG with viewBox 0..100 in both axes, preserveAspectRatio=none so coords
-  // map directly to percentages of the frame.
   const defs = shapes
     .filter((s): s is ArrowOverlay => s.type === "arrow")
     .map(
@@ -80,9 +96,7 @@ function renderAnnotationLayer(
   const body = shapes
     .map((s) => {
       const selected = s.id === selectedId;
-      const selectStroke = selected
-        ? `stroke-dasharray="2 2"`
-        : "";
+      const selectStroke = selected ? `stroke-dasharray="2 2"` : "";
       if (s.type === "arrow") {
         return `
           <line
@@ -94,7 +108,7 @@ function renderAnnotationLayer(
             marker-end="url(#m-${s.id})"
             vector-effect="non-scaling-stroke"
           />`;
-      } else {
+      } else if (s.type === "rect") {
         return `
           <rect
             data-overlay-id="${s.id}"
@@ -104,6 +118,23 @@ function renderAnnotationLayer(
             fill="${s.fill}"
             stroke="${s.color}" stroke-width="${s.strokeWidth}"
             ${selectStroke}
+            vector-effect="non-scaling-stroke"
+          />`;
+      } else {
+        // pen
+        if (s.points.length < 4) return "";
+        const pts: string[] = [];
+        for (let i = 0; i < s.points.length; i += 2) {
+          pts.push(`${s.points[i]},${s.points[i + 1]}`);
+        }
+        return `
+          <polyline
+            data-overlay-id="${s.id}"
+            class="overlay-svg ${selected ? "selected" : ""}"
+            points="${pts.join(" ")}"
+            fill="none"
+            stroke="${s.color}" stroke-width="${s.strokeWidth}"
+            stroke-linecap="round" stroke-linejoin="round"
             vector-effect="non-scaling-stroke"
           />`;
       }
@@ -156,9 +187,13 @@ export function attachOverlayDragHandlers(
       handlers.onSelect(null);
       return;
     }
-    // Drag only applies to text/image overlays — SVG shapes are select-only here
-    if (overlay.tagName === "line" || overlay.tagName === "rect" ||
-        overlay.classList?.contains("overlay-svg")) {
+    // Drag only applies to text/image/blur overlays — SVG shapes are select-only here
+    if (
+      overlay.tagName === "line" ||
+      overlay.tagName === "rect" ||
+      overlay.tagName === "polyline" ||
+      overlay.classList?.contains("overlay-svg")
+    ) {
       handlers.onSelect(overlay.getAttribute("data-overlay-id"));
       return;
     }

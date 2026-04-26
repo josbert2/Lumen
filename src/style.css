@@ -492,6 +492,22 @@ input[type="range"] {
   pointer-events: none;
 }
 
+.overlay-blur {
+  background: rgba(255, 255, 255, 0.001); /* needed for backdrop-filter on some browsers */
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Background noise overlay (a SVG turbulence pattern, additive grain) */
+.frame-noise {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 1.2 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/></svg>");
+  background-size: 200px 200px;
+}
+
 /* ── Watermark ────────────────────────────────────────────────────────── */
 
 .watermark {

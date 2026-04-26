@@ -64,11 +64,12 @@ All in the browser. Nothing leaves the user's machine.
 ### 🔄 Phase 3 — Differentiators & advanced (in progress)
 
 - [x] **"Magic" background**: extract dominant colors from uploaded image (Gradient + Mesh modes)
-- [x] **Annotations**: arrow + rectangle, drawable on canvas, editable color/stroke/fill/radius
-- [ ] Annotations: blur regions, freehand pen
+- [x] **Annotations**: arrow + rectangle, drawable on canvas
+- [x] **Blur regions**: backdrop-filter rectangles for hiding sensitive info
+- [x] **Freehand pen**: SVG polyline drawing tool
+- [x] **Background noise / grain**: SVG turbulence overlay with mix-blend-mode
 - [ ] Tweet / code snippet import
 - [ ] Unsplash integration for backgrounds
-- [ ] Background blur + noise filters
 - [ ] Migrate to **React + Zustand + Konva** (multi-layer canvas) — needed for:
   - Animation timeline (keyframes, easing, playhead)
   - Video export: MP4 (WebCodecs / FFmpeg WASM), WebM, GIF

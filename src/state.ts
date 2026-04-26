@@ -56,9 +56,41 @@ export type RectOverlay = {
   radius: number;
 };
 
-export type Overlay = TextOverlay | ImageOverlay | ArrowOverlay | RectOverlay;
+export type BlurOverlay = {
+  id: string;
+  type: "blur";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  amount: number; // px of blur
+  radius: number;
+};
 
-export type Tool = "select" | "text" | "image" | "arrow" | "rect" | "highlight";
+export type PenOverlay = {
+  id: string;
+  type: "pen";
+  points: number[]; // flat [x1, y1, x2, y2, ...] in % of frame
+  color: string;
+  strokeWidth: number;
+};
+
+export type Overlay =
+  | TextOverlay
+  | ImageOverlay
+  | ArrowOverlay
+  | RectOverlay
+  | BlurOverlay
+  | PenOverlay;
+
+export type Tool =
+  | "select"
+  | "text"
+  | "image"
+  | "arrow"
+  | "rect"
+  | "blur"
+  | "pen";
 
 export interface State {
   imageSrc: string | null;
@@ -76,6 +108,7 @@ export interface State {
   watermark: boolean;
   exportScale: 1 | 2 | 3;
   tool: Tool;
+  bgNoise: number; // 0..1
 }
 
 export const initialState: State = {
@@ -94,6 +127,7 @@ export const initialState: State = {
   watermark: false,
   exportScale: 1,
   tool: "select",
+  bgNoise: 0,
 };
 
 // ── Mutable state container ────────────────────────────────────────────────
